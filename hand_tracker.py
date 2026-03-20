@@ -21,8 +21,8 @@ import mediapipe as mp
 # ── Config ───────────────────────────────────────────────────────────────────
 SMOOTHING_ALPHA = 0.7   # display smoothing only (0 = sluggish, 1 = raw)
 
-FINGER_TIPS = {"index": 8, "middle": 12}
-FINGER_PIP  = {"index": 6, "middle": 10}
+FINGER_TIPS = {"thumb": 4, "index": 8, "middle": 12, "ring": 16, "pinky": 20}
+FINGER_PIP  = {"thumb": 3, "index": 6, "middle": 10, "ring": 14, "pinky": 18}
 
 UDP_HOST = "127.0.0.1"
 UDP_PORT = 5005

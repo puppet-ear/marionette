@@ -33,7 +33,10 @@ from bpy.types import Object, Panel, Operator, PropertyGroup
 
 # ── Finger definitions ─────────────────────────────────────────────────────
 FINGERS = ["thumb", "index", "middle", "ring", "pinky"]
-TRACKED = {"left_index", "left_middle", "right_index", "right_middle"}
+TRACKED = {
+    "left_thumb",  "left_index",  "left_middle",  "left_ring",  "left_pinky",
+    "right_thumb", "right_index", "right_middle", "right_ring", "right_pinky",
+}
 
 
 # ── Scene properties ────────────────────────────────────────────────────────
