@@ -65,13 +65,16 @@ class MarionetteProperties(PropertyGroup):
 
 # ── Runtime state (module-level, not stored in blend file) ──────────────────
 _runtime = {
-    "running":     False,
-    "sock":        None,
-    "thread":      None,
-    "latest":      {},   # {key: [dx,dy,dz]}
-    "lock":        threading.Lock(),
-    "rest_pos":    {},   # {key: Vector} — captured when operator starts
-    "smooth_pos":  {},   # {key: Vector} — current lerped position
+    "running":      False,
+    "sock":         None,
+    "thread":       None,
+    "latest":       {},   # {key: [dx,dy,dz]}
+    "lock":         threading.Lock(),
+    "smooth_pos":   {},   # {key: tuple} — current lerped world position
+    "session_base": {},   # {key: tuple} — empty position when finger last (re-)appeared
+    "prev_keys":    set(),# keys that had data in the previous frame
+    "last_raw":     "",   # raw JSON string of last received packet (for debug)
+    "packet_count": 0,
 }
 
 
@@ -80,9 +83,12 @@ def _listen(sock):
     while _runtime["running"]:
         try:
             data, _ = sock.recvfrom(4096)
-            payload = json.loads(data.decode())
+            raw = data.decode()
+            payload = json.loads(raw)
             with _runtime["lock"]:
-                _runtime["latest"] = payload
+                _runtime["latest"]      = payload
+                _runtime["last_raw"]    = raw
+                _runtime["packet_count"] += 1
         except (OSError, json.JSONDecodeError):
             pass
 
@@ -107,32 +113,36 @@ class MARIONETTE_OT_start(Operator):
         with _runtime["lock"]:
             latest = dict(_runtime["latest"])
 
+        active_keys = set(latest.keys())
+        prev_keys   = _runtime["prev_keys"]
+
         for hand in ("left", "right"):
             for finger in FINGERS:
-                key   = f"{hand}_{finger}"
-                prop  = key  # matches PropertyGroup attribute names
-                obj   = getattr(props, prop, None)
+                key = f"{hand}_{finger}"
+                obj = getattr(props, key, None)
                 if obj is None:
                     continue
 
-                rest = _runtime["rest_pos"].get(key)
-                if rest is None:
-                    continue
+                cur = _runtime["smooth_pos"].get(key, tuple(obj.location))
 
-                if key in latest:
+                if key in active_keys:
+                    # Finger just (re-)appeared — anchor session_base to where
+                    # the empty currently sits so there's no position jump
+                    if key not in prev_keys:
+                        _runtime["session_base"][key] = cur
+
+                    base       = _runtime["session_base"][key]
                     dx, dy, dz = latest[key]
-                    # Image x → Blender X, image y (down=+) → Blender -Z,
-                    # MediaPipe depth z → Blender Y (toward/away camera)
+                    # Image x → Blender X, depth z → Blender Y, image y (↓) → Blender -Z
                     target = (
-                        rest[0] + dx * sens,
-                        rest[1] - dz * sens,   # depth
-                        rest[2] - dy * sens,   # image-y inverted → world Z
+                        base[0] + dx * sens,
+                        base[1] - dz * sens,
+                        base[2] - dy * sens,
                     )
                 else:
-                    # No data for this finger — hold rest position
-                    target = rest
+                    # No data — hold current position, don't move
+                    target = cur
 
-                cur = _runtime["smooth_pos"].get(key, rest)
                 new_pos = (
                     cur[0] * α + target[0] * (1 - α),
                     cur[1] * α + target[1] * (1 - α),
@@ -140,6 +150,8 @@ class MARIONETTE_OT_start(Operator):
                 )
                 _runtime["smooth_pos"][key] = new_pos
                 obj.location = new_pos
+
+        _runtime["prev_keys"] = active_keys
 
         # Trigger viewport redraw
         for area in context.screen.areas:
@@ -155,17 +167,16 @@ class MARIONETTE_OT_start(Operator):
 
         props = context.scene.marionette
 
-        # Capture rest positions of all mapped empties
-        _runtime["rest_pos"].clear()
+        # Seed smooth_pos from current empty locations
         _runtime["smooth_pos"].clear()
+        _runtime["session_base"].clear()
+        _runtime["prev_keys"] = set()
         for hand in ("left", "right"):
             for finger in FINGERS:
                 key = f"{hand}_{finger}"
                 obj = getattr(props, key, None)
                 if obj:
-                    pos = tuple(obj.location)
-                    _runtime["rest_pos"][key]   = pos
-                    _runtime["smooth_pos"][key] = pos
+                    _runtime["smooth_pos"][key] = tuple(obj.location)
 
         # Open UDP socket
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -209,6 +220,55 @@ class MARIONETTE_OT_stop(Operator):
         return {"FINISHED"}
 
 
+class MARIONETTE_OT_listen(Operator):
+    """One-shot debug: open port briefly and show the next UDP packet received."""
+    bl_idname  = "marionette.listen"
+    bl_label   = "Listen Once"
+    bl_description = "Open port 5005 briefly and capture one packet for debugging"
+
+    def execute(self, context):
+        # If main operator already running, just report what we have
+        if _runtime["running"]:
+            with _runtime["lock"]:
+                raw   = _runtime["last_raw"]
+                count = _runtime["packet_count"]
+            if raw:
+                self.report({"INFO"}, f"[{count} pkts] Last: {raw[:120]}")
+            else:
+                self.report({"WARNING"}, "Running but no packets received yet — is hand_tracker.py running?")
+            return {"FINISHED"}
+
+        # Not running — open socket briefly
+        props = context.scene.marionette
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        sock.settimeout(2.0)
+        try:
+            sock.bind(("0.0.0.0", props.port))
+        except OSError as e:
+            self.report({"ERROR"}, f"Cannot bind port {props.port}: {e}")
+            sock.close()
+            return {"CANCELLED"}
+
+        try:
+            data, addr = sock.recvfrom(4096)
+            raw = data.decode()
+            _runtime["last_raw"] = raw
+            _runtime["packet_count"] += 1
+            self.report({"INFO"}, f"Got packet from {addr}: {raw[:120]}")
+        except socket.timeout:
+            _runtime["last_raw"] = ""
+            self.report({"WARNING"}, "No packet received in 2s — is hand_tracker.py running?")
+        finally:
+            sock.close()
+
+        # Force panel redraw
+        for area in context.screen.areas:
+            if area.type == "VIEW_3D":
+                area.tag_redraw()
+        return {"FINISHED"}
+
+
 def _stop_runtime():
     _runtime["running"] = False
     if _runtime["sock"]:
@@ -231,27 +291,30 @@ class MARIONETTE_PT_main(Panel):
     bl_category    = "Marionette"
 
     def draw(self, context):
-        layout = context.layout
+        try:
+            self._draw(context)
+        except Exception as e:
+            self.layout.label(text=f"Panel error: {e}", icon="ERROR")
+
+    def _draw(self, context):
+        layout = self.layout
         props  = context.scene.marionette
         active = _runtime["running"]
 
-        # ── Transport ──────────────────────────────────────────────────
-        row = layout.row(align=True)
-        row.scale_y = 1.4
-        start = row.operator("marionette.start", icon="PLAY")
-        stop  = row.operator("marionette.stop",  icon="SNAP_FACE")
-        row.enabled = True
-
-        sub = layout.row()
-        sub.alert = active
-        sub.label(text="● LIVE" if active else "○ Stopped",
-                  icon="RADIOBUT_ON" if active else "RADIOBUT_OFF")
+        # ── Single toggle button ────────────────────────────────────────
+        btn_row = layout.row()
+        btn_row.scale_y = 1.8
+        if active:
+            btn_row.alert = True   # red tint
+            btn_row.operator("marionette.stop", text="  Stop", icon="CANCEL")
+        else:
+            btn_row.operator("marionette.start", text="  Start", icon="PLAY")
 
         layout.separator()
 
         # ── Settings ───────────────────────────────────────────────────
         box = layout.box()
-        box.label(text="Settings", icon="SETTINGS")
+        box.label(text="Settings", icon="PREFERENCES")
         col = box.column(align=True)
         col.prop(props, "port")
         col.prop(props, "sensitivity", slider=True)
@@ -263,54 +326,69 @@ class MARIONETTE_PT_main(Panel):
         box = layout.box()
         box.label(text="Finger Mapping", icon="HAND")
 
-        # Column headers
+        # Headers
         header = box.row()
-        header.label(text="LEFT HAND",  icon="TRIA_LEFT")
-        header.label(text="RIGHT HAND", icon="TRIA_RIGHT")
+        l = header.column()
+        l.label(text="← LEFT HAND")
+        r = header.column()
+        r.label(text="RIGHT HAND →")
 
-        box.separator(factor=0.4)
-
-        # One row per finger, left column | right column
-        ICONS = {
-            "thumb":  "TRIA_RIGHT",
-            "index":  "LAYER_ACTIVE",
-            "middle": "LAYER_ACTIVE",
-            "ring":   "LAYER_USED",
-            "pinky":  "LAYER_USED",
-        }
+        box.separator(factor=0.3)
 
         for finger in FINGERS:
+            key_l    = f"left_{finger}"
+            key_r    = f"right_{finger}"
+            tracked_l = key_l in TRACKED
+            tracked_r = key_r in TRACKED
+            lbl       = finger.capitalize()
+
             row = box.row(align=False)
 
-            # ── Left side ──
+            # Left finger label + picker
             left_col = row.column(align=True)
-            left_col.scale_x = 1.0
-            key_l = f"left_{finger}"
-            tracked_l = key_l in TRACKED
-            sub_l = left_col.row(align=True)
-            sub_l.alert = False
-            if not tracked_l:
-                sub_l.enabled = False   # dim untracked fingers
-            lbl = finger.capitalize()
-            sub_l.label(text=lbl)
-            sub_l.prop(props, key_l, icon="OBJECT_DATA")
+            left_row = left_col.row(align=True)
+            left_row.enabled = tracked_l
+            left_row.label(text=lbl)
+            left_row.prop(props, key_l, icon="OBJECT_DATA")
 
-            # ── Divider ──
-            row.separator(factor=1.5)
+            row.separator(factor=0.8)
 
-            # ── Right side ──
+            # Right finger picker + label (mirrored)
             right_col = row.column(align=True)
-            key_r = f"right_{finger}"
-            tracked_r = key_r in TRACKED
-            sub_r = right_col.row(align=True)
-            if not tracked_r:
-                sub_r.enabled = False
-            sub_r.prop(props, key_r, icon="OBJECT_DATA")
-            sub_r.label(text=lbl)
+            right_row = right_col.row(align=True)
+            right_row.enabled = tracked_r
+            right_row.prop(props, key_r, icon="OBJECT_DATA")
+            right_row.label(text=lbl)
 
-        box.separator(factor=0.4)
-        note = box.row()
-        note.label(text="Greyed = not sent by tracker yet", icon="INFO")
+        box.separator(factor=0.3)
+        box.label(text="Dimmed = not tracked by script", icon="INFO")
+
+        layout.separator()
+
+        # ── Debug / Listen ─────────────────────────────────────────────
+        dbox = layout.box()
+        drow = dbox.row()
+        drow.label(text="Debug", icon="CONSOLE")
+        with _runtime["lock"]:
+            raw   = _runtime["last_raw"]
+            count = _runtime["packet_count"]
+
+        dbox.operator("marionette.listen", text="Listen on port 5005", icon="TRIA_DOWN")
+
+        if count:
+            dbox.label(text=f"Packets received: {count}")
+            # Pretty-print JSON keys present in last packet
+            try:
+                parsed = json.loads(raw)
+                keys = list(parsed.keys())
+                dbox.label(text="Keys: " + (", ".join(keys) if keys else "(empty — no active fingers)"))
+                # Show first value as a sample
+                for k, v in list(parsed.items())[:2]:
+                    dbox.label(text=f"  {k}: [{v[0]:.3f}, {v[1]:.3f}, {v[2]:.3f}]")
+            except Exception:
+                dbox.label(text=raw[:80])
+        else:
+            dbox.label(text="No packets yet", icon="ERROR")
 
 
 # ── Registration ─────────────────────────────────────────────────────────────
@@ -318,6 +396,7 @@ CLASSES = [
     MarionetteProperties,
     MARIONETTE_OT_start,
     MARIONETTE_OT_stop,
+    MARIONETTE_OT_listen,
     MARIONETTE_PT_main,
 ]
 

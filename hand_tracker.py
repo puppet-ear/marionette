@@ -24,7 +24,6 @@ import numpy as np
 T_THRESHOLD      = 0.5   # seconds hand must be still before locking origin
 SMOOTHING_ALPHA  = 0.8   # 0→sluggish, 1→raw
 STILLNESS_RADIUS = 40    # pixels — max wrist drift during calibration
-ZONE_FRAC        = 0.70  # fraction of screen for detection zone (centred)
 
 # Only track these two fingers
 FINGER_TIPS = {"index": 8, "middle": 12}
@@ -96,35 +95,9 @@ def get_extended_fingers(landmarks):
     return extended
 
 
-def get_zone(w, h):
-    """Return (x1, y1, x2, y2) of the centred detection zone."""
-    margin_x = int(w * (1 - ZONE_FRAC) / 2)
-    margin_y = int(h * (1 - ZONE_FRAC) / 2)
-    return margin_x, margin_y, w - margin_x, h - margin_y
-
-
-def px_in_zone(px, w, h):
-    """True if a pixel position is inside the detection zone."""
-    x1, y1, x2, y2 = get_zone(w, h)
-    return x1 <= px[0] <= x2 and y1 <= px[1] <= y2
 
 
 # ── Drawing ──────────────────────────────────────────────────────────────────
-def draw_zone(frame, w, h, any_active):
-    """Draw the detection zone rectangle."""
-    x1, y1, x2, y2 = get_zone(w, h)
-    color     = (0, 200, 80) if any_active else (100, 100, 100)
-    thickness = 2 if any_active else 1
-
-    overlay = frame.copy()
-    cv2.rectangle(overlay, (x1, y1), (x2, y2), color, -1)
-    cv2.addWeighted(overlay, 0.04, frame, 0.96, 0, frame)
-    cv2.rectangle(frame, (x1, y1), (x2, y2), color, thickness)
-
-    label = "DETECTION ZONE"
-    cv2.putText(frame, label, (x1 + 8, y1 + 22),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.55, color, 1)
-
 
 def draw_calib_dots(frame, state, current_positions, hand_label):
     """Ghost ring per fingertip that fills with colour as calibration progresses."""
@@ -203,7 +176,7 @@ def process_hand(frame, hand_lm, state, hand_label, w, h):
         px     = (lerp_point(state.smoothed[name], raw_px, SMOOTHING_ALPHA)
                   if name in state.smoothed else raw_px)
         state.smoothed[name] = px
-        if name in extended and px_in_zone(px, w, h):
+        if name in extended:
             current_positions[name] = px
             current_norm[name] = (lm.x, lm.y, lm.z)
 
@@ -318,10 +291,6 @@ def run(source):
 
         # Broadcast deltas (empty dict = no active hands, Blender holds position)
         udp_sock.sendto(json.dumps(packet).encode(), (UDP_HOST, UDP_PORT))
-
-        # Detection zone overlay
-        any_active = any(s.is_active for s in states.values())
-        draw_zone(frame, w, h, any_active)
 
         # HUD
         now       = time.time()
