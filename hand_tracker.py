@@ -1,15 +1,21 @@
 #!/usr/bin/env python3
 """
-Digital Marionette — Hand Tracker (Step 1: Detection & Visualization)
+Digital Marionette — Hand Tracker
 
-Tracks thumb/index/middle fingertips per hand via MediaPipe.
-State machine per hand: NO_HAND → CALIBRATING → ACTIVE
-Hands must be within the central detection zone to be tracked.
-Webcam is mirrored for natural interaction.
+Tracks index + middle fingertips per hand via MediaPipe.
+State machine per hand:  NO_HAND → CALIBRATING → ACTIVE
+State machine per finger: inactive → active → waiting → (return to string) → active
+
+The "string" metaphor:
+  - When you first extend a finger it immediately grabs control (active).
+  - When you fold/lose a finger the Empty holds; a ghost dot marks where
+    the string is hanging.  You must bring your finger back within
+    ENGAGE_RADIUS pixels of that ghost to regain control.
+  - On re-engagement the origin re-anchors so delta=0 → no snap.
 
 Usage:
-    python hand_tracker.py                  # use test video
-    python hand_tracker.py --webcam 0       # use webcam (mirrored)
+    python hand_tracker.py                  # test video
+    python hand_tracker.py --webcam 0       # webcam
 """
 
 import argparse
@@ -22,45 +28,54 @@ import numpy as np
 
 # ── Config ───────────────────────────────────────────────────────────────────
 T_THRESHOLD      = 0.5   # seconds hand must be still before locking origin
-SMOOTHING_ALPHA  = 0.8   # 0→sluggish, 1→raw
+SMOOTHING_ALPHA  = 0.8   # 0 = sluggish, 1 = raw
 STILLNESS_RADIUS = 40    # pixels — max wrist drift during calibration
+ENGAGE_RADIUS    = 70    # pixels — how close finger must be to re-grab a string
 
-# Only track these two fingers
 FINGER_TIPS = {"index": 8, "middle": 12}
 FINGER_PIP  = {"index": 6, "middle": 10}
 
-# UDP broadcast settings
 UDP_HOST = "127.0.0.1"
 UDP_PORT = 5005
 
-# Marker sizes
-CALIB_RADIUS = 22   # calibration progress dot
-TIP_RADIUS   = 16   # active fingertip dot
-ORIGIN_RADIUS = 18  # locked origin dot
+CALIB_RADIUS  = 22
+TIP_RADIUS    = 16
+ORIGIN_RADIUS = 18
 
-# Per-hand colours (BGR): Left=orange, Right=green
 HAND_COLORS = {
-    "Left":  {"origin": (0, 140, 255), "string": (0, 200, 255), "calib": (0, 160, 255), "tip": (0, 180, 255)},
-    "Right": {"origin": (50, 220, 50), "string": (200, 255, 200), "calib": (0, 220, 100), "tip": (80, 255, 80)},
+    "Left":  {"origin": (0, 140, 255), "string": (0, 200, 255),
+               "calib":  (0, 160, 255), "tip":    (0, 180, 255)},
+    "Right": {"origin": (50, 220, 50),  "string": (200, 255, 200),
+               "calib":  (0, 220, 100), "tip":    (80, 255, 80)},
 }
-COLOR_ACTIVE = (0, 255, 0)
-COLOR_CALIB  = (0, 200, 255)
-COLOR_NOHAND = (60, 60, 60)
-COLOR_DELTA  = (255, 200, 0)
+COLOR_ACTIVE  = (0, 255, 0)
+COLOR_CALIB   = (0, 200, 255)
+COLOR_NOHAND  = (60, 60, 60)
+COLOR_DELTA   = (255, 200, 0)
+COLOR_WAITING = (180, 180, 255)   # ghost / seeking colour
 
 
 # ── State ────────────────────────────────────────────────────────────────────
 class TrackerState:
     def __init__(self):
-        self.smoothed = {}
+        self.smoothed          = {}   # name → last smoothed pixel (always updated)
+        self.finger_engagement = {}   # name → "inactive" | "waiting" | "active"
+        self.last_screen_pos   = {}   # name → (px, py) saved when going waiting
         self.reset()
 
     def reset(self):
+        """Called when the hand disappears.  Calibration state clears;
+        finger engagement transitions active→waiting so the user must
+        find the string again after re-detection."""
         self.hand_start_time = None
         self.anchor_px       = None
         self.is_active       = False
         self.c_origin        = {}
         self.c_origin_norm   = {}
+        for name in list(self.finger_engagement):
+            if self.finger_engagement[name] == "active":
+                self.finger_engagement[name] = "waiting"
+                # last_screen_pos is already saved from the last active frame
 
     @property
     def status(self):
@@ -82,7 +97,7 @@ def lerp_point(old, new, alpha):
 
 
 def get_extended_fingers(landmarks):
-    """Return names of fingers whose tip is farther from wrist than its PIP (3D)."""
+    """Return names of fingers whose tip is farther from wrist than its PIP (3-D)."""
     wrist = landmarks[0]
     extended = set()
     for name, tip_id in FINGER_TIPS.items():
@@ -95,10 +110,7 @@ def get_extended_fingers(landmarks):
     return extended
 
 
-
-
 # ── Drawing ──────────────────────────────────────────────────────────────────
-
 def draw_calib_dots(frame, state, current_positions, hand_label):
     """Ghost ring per fingertip that fills with colour as calibration progresses."""
     if state.status != "CALIBRATING" or not current_positions:
@@ -108,12 +120,10 @@ def draw_calib_dots(frame, state, current_positions, hand_label):
     color    = HAND_COLORS[hand_label]["calib"]
 
     for px in current_positions.values():
-        # ghost ring always visible
         overlay = frame.copy()
         cv2.circle(overlay, px, CALIB_RADIUS, color, 2)
         cv2.addWeighted(overlay, 0.18, frame, 0.82, 0, frame)
 
-        # filled dot fades in with progress
         if progress > 0:
             overlay2 = frame.copy()
             cv2.circle(overlay2, px, CALIB_RADIUS, color, -1)
@@ -121,12 +131,13 @@ def draw_calib_dots(frame, state, current_positions, hand_label):
 
 
 def draw_strings(frame, state, current_positions, hand_label):
-    """Origin dots + string lines + current fingertip dots."""
+    """Origin dots + string lines + active fingertip dots."""
     colors = HAND_COLORS[hand_label]
     for name, origin_px in state.c_origin.items():
+        if state.finger_engagement.get(name) != "active":
+            continue
         ox, oy = origin_px[0], origin_px[1]
 
-        # origin dot (always drawn while active)
         cv2.circle(frame, (ox, oy), ORIGIN_RADIUS, colors["origin"], 2)
         cv2.circle(frame, (ox, oy), 4, colors["origin"], -1)
 
@@ -134,19 +145,50 @@ def draw_strings(frame, state, current_positions, hand_label):
             continue
         cur = current_positions[name]
 
-        # current fingertip dot
         cv2.circle(frame, cur, TIP_RADIUS, colors["tip"], -1)
         cv2.circle(frame, cur, TIP_RADIUS + 2, colors["tip"], 1)
 
-        # string line
         cv2.line(frame, (ox, oy), cur, colors["string"], 2)
 
-        # delta label at midpoint
         dx, dy = cur[0] - ox, cur[1] - oy
         dist   = np.sqrt(dx*dx + dy*dy)
         mid    = ((ox + cur[0]) // 2, (oy + cur[1]) // 2)
         cv2.putText(frame, f"{name} {dist:.0f}px", (mid[0]+5, mid[1]-5),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.45, COLOR_DELTA, 1)
+
+
+def draw_waiting_strings(frame, state, current_positions, hand_label):
+    """Ghost anchor dots for fingers waiting to be re-grabbed."""
+    colors = HAND_COLORS[hand_label]
+    for name, last_pos in state.last_screen_pos.items():
+        if state.finger_engagement.get(name) != "waiting":
+            continue
+
+        lx, ly = last_pos
+
+        # Engagement-radius ring (shows where finger needs to go)
+        overlay = frame.copy()
+        cv2.circle(overlay, (lx, ly), ENGAGE_RADIUS, COLOR_WAITING, 1)
+        cv2.addWeighted(overlay, 0.45, frame, 0.55, 0, frame)
+
+        # Ghost dot at last known position
+        overlay2 = frame.copy()
+        cv2.circle(overlay2, (lx, ly), TIP_RADIUS, colors["tip"], -1)
+        cv2.addWeighted(overlay2, 0.30, frame, 0.70, 0, frame)
+        cv2.circle(frame, (lx, ly), TIP_RADIUS, COLOR_WAITING, 1)
+
+        # Seeking line if finger is currently visible but outside radius
+        if name in current_positions:
+            cur  = current_positions[name]
+            dist = np.sqrt((cur[0]-lx)**2 + (cur[1]-ly)**2)
+            overlay3 = frame.copy()
+            cv2.line(overlay3, (lx, ly), cur, COLOR_WAITING, 1)
+            cv2.addWeighted(overlay3, 0.45, frame, 0.55, 0, frame)
+            # Distance to string
+            mid = ((lx + cur[0]) // 2, (ly + cur[1]) // 2)
+            cv2.putText(frame, f"{name} {dist:.0f}px",
+                        (mid[0]+4, mid[1]-4),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.40, COLOR_WAITING, 1)
 
 
 def draw_hud(frame, states, fps):
@@ -168,8 +210,9 @@ def draw_hud(frame, states, fps):
 def process_hand(frame, hand_lm, state, hand_label, w, h):
     extended = get_extended_fingers(hand_lm.landmark)
 
+    # Update smoothed positions for all tracked tips (extended or not)
     current_positions = {}
-    current_norm      = {}   # normalised (0-1) coords for UDP delta computation
+    current_norm      = {}
     for name, idx in FINGER_TIPS.items():
         lm     = hand_lm.landmark[idx]
         raw_px = landmark_to_pixel(lm, w, h)
@@ -178,10 +221,10 @@ def process_hand(frame, hand_lm, state, hand_label, w, h):
         state.smoothed[name] = px
         if name in extended:
             current_positions[name] = px
-            current_norm[name] = (lm.x, lm.y, lm.z)
+            current_norm[name]      = (lm.x, lm.y, lm.z)
 
+    # Wrist stillness check (calibration only)
     wrist_px = landmark_to_pixel(hand_lm.landmark[0], w, h)
-
     if state.hand_start_time is None:
         state.hand_start_time = time.time()
         state.anchor_px       = wrist_px
@@ -192,6 +235,7 @@ def process_hand(frame, hand_lm, state, hand_label, w, h):
             state.hand_start_time = time.time()
             state.anchor_px       = wrist_px
 
+    # Lock origin after threshold
     elapsed = time.time() - state.hand_start_time
     if elapsed >= T_THRESHOLD and not state.is_active:
         for name, px in current_positions.items():
@@ -201,16 +245,49 @@ def process_hand(frame, hand_lm, state, hand_label, w, h):
         state.is_active = True
         print(f"Origin locked! ({hand_label})")
 
+    # ── Finger engagement (string-grab logic) ────────────────────────
     if state.is_active:
+        # Any currently active finger that folded → goes to waiting, save screen pos
+        for name in list(state.finger_engagement):
+            if (state.finger_engagement[name] == "active"
+                    and name not in current_positions):
+                state.finger_engagement[name] = "waiting"
+                if name in state.smoothed:
+                    state.last_screen_pos[name] = state.smoothed[name]
+
+        for name, px in current_positions.items():
+            eng = state.finger_engagement.get(name, "inactive")
+            if eng == "inactive":
+                # First contact — grab immediately
+                state.finger_engagement[name] = "active"
+            elif eng == "waiting":
+                last = state.last_screen_pos.get(name)
+                if last is None:
+                    state.finger_engagement[name] = "active"
+                else:
+                    dist = np.sqrt((px[0]-last[0])**2 + (px[1]-last[1])**2)
+                    if dist <= ENGAGE_RADIUS:
+                        # Found the string — re-anchor origin so delta=0 here
+                        state.finger_engagement[name] = "active"
+                        lm = hand_lm.landmark[FINGER_TIPS[name]]
+                        state.c_origin_norm[name] = (lm.x, lm.y, lm.z)
+                        # Also update pixel origin so the string line looks right
+                        state.c_origin[name] = (px[0], px[1], lm.z)
+            # "active" stays active
+
+    # ── Draw ─────────────────────────────────────────────────────────
+    if state.is_active:
+        draw_waiting_strings(frame, state, current_positions, hand_label)
         draw_strings(frame, state, current_positions, hand_label)
     else:
         draw_calib_dots(frame, state, current_positions, hand_label)
 
-    # Compute normalised deltas from locked origin (None if not active)
+    # ── Compute deltas (ACTIVE fingers only) ─────────────────────────
     deltas = {}
     if state.is_active:
         for name, norm in current_norm.items():
-            if name in state.c_origin_norm:
+            if (state.finger_engagement.get(name) == "active"
+                    and name in state.c_origin_norm):
                 ox, oy, oz = state.c_origin_norm[name]
                 deltas[name] = (norm[0] - ox, norm[1] - oy, norm[2] - oz)
 
@@ -220,7 +297,6 @@ def process_hand(frame, hand_lm, state, hand_label, w, h):
 # ── Main loop ────────────────────────────────────────────────────────────────
 def run(source):
     is_webcam = isinstance(source, int)
-    is_video  = isinstance(source, str)
 
     mp_hands = mp.solutions.hands
     hands = mp_hands.Hands(
@@ -247,7 +323,6 @@ def run(source):
     prev_time = time.time()
     paused    = False
 
-    # UDP socket — fire-and-forget, non-blocking
     udp_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     print(f"Broadcasting deltas → {UDP_HOST}:{UDP_PORT}")
 
@@ -257,7 +332,6 @@ def run(source):
             if not ok:
                 break
 
-        # Mirror webcam so it feels like looking in a mirror
         if is_webcam:
             frame = cv2.flip(frame, 1)
 
@@ -265,23 +339,22 @@ def run(source):
         rgb.flags.writeable = False
         results = hands.process(rgb)
 
-        # Build map: label → landmarks, filtered to detection zone
         detected_this_frame = {}
         if results.multi_hand_landmarks and results.multi_handedness:
             for lm_list, handedness in zip(results.multi_hand_landmarks,
                                            results.multi_handedness):
                 label = handedness.classification[0].label
-                # For mirrored webcam, MediaPipe's Left/Right are swapped visually
                 if is_webcam:
                     label = "Right" if label == "Left" else "Left"
                 detected_this_frame[label] = lm_list
 
-        # Process / reset each hand; collect deltas for UDP
-        packet = {}
+        packet      = {}
+        states_info = {}
         for label, state in states.items():
-            hand_key = label.lower()   # "left" / "right"
+            hand_key = label.lower()
             if label in detected_this_frame:
-                _, deltas = process_hand(frame, detected_this_frame[label], state, label, w, h)
+                _, deltas = process_hand(frame, detected_this_frame[label],
+                                         state, label, w, h)
                 for finger, delta in deltas.items():
                     packet[f"{hand_key}_{finger}"] = list(delta)
             else:
@@ -289,10 +362,13 @@ def run(source):
                     print(f"Hand lost — resetting. ({label})")
                 state.reset()
 
-        # Broadcast deltas (empty dict = no active hands, Blender holds position)
+            for name in FINGER_TIPS:
+                key = f"{hand_key}_{name}"
+                states_info[key] = state.finger_engagement.get(name, "inactive")
+
+        packet["_states"] = states_info
         udp_sock.sendto(json.dumps(packet).encode(), (UDP_HOST, UDP_PORT))
 
-        # HUD
         now       = time.time()
         fps       = 1.0 / max(now - prev_time, 1e-6)
         prev_time = now
@@ -307,7 +383,7 @@ def run(source):
             print("Manual reset.")
             for s in states.values():
                 s.reset()
-        elif key == ord(' ') and is_video:
+        elif key == ord(' ') and not is_webcam:
             paused = not paused
             print("Paused." if paused else "Resumed.")
 
