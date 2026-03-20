@@ -13,6 +13,8 @@ Usage:
 """
 
 import argparse
+import json
+import socket
 import time
 import cv2
 import mediapipe as mp
@@ -24,9 +26,13 @@ SMOOTHING_ALPHA  = 0.8   # 0→sluggish, 1→raw
 STILLNESS_RADIUS = 40    # pixels — max wrist drift during calibration
 ZONE_FRAC        = 0.70  # fraction of screen for detection zone (centred)
 
-# Only track these three fingers
-FINGER_TIPS = {"thumb": 4, "index": 8, "middle": 12}
-FINGER_PIP  = {"thumb": 3, "index": 6, "middle": 10}
+# Only track these two fingers
+FINGER_TIPS = {"index": 8, "middle": 12}
+FINGER_PIP  = {"index": 6, "middle": 10}
+
+# UDP broadcast settings
+UDP_HOST = "127.0.0.1"
+UDP_PORT = 5005
 
 # Marker sizes
 CALIB_RADIUS = 22   # calibration progress dot
@@ -190,6 +196,7 @@ def process_hand(frame, hand_lm, state, hand_label, w, h):
     extended = get_extended_fingers(hand_lm.landmark)
 
     current_positions = {}
+    current_norm      = {}   # normalised (0-1) coords for UDP delta computation
     for name, idx in FINGER_TIPS.items():
         lm     = hand_lm.landmark[idx]
         raw_px = landmark_to_pixel(lm, w, h)
@@ -198,6 +205,7 @@ def process_hand(frame, hand_lm, state, hand_label, w, h):
         state.smoothed[name] = px
         if name in extended and px_in_zone(px, w, h):
             current_positions[name] = px
+            current_norm[name] = (lm.x, lm.y, lm.z)
 
     wrist_px = landmark_to_pixel(hand_lm.landmark[0], w, h)
 
@@ -225,7 +233,15 @@ def process_hand(frame, hand_lm, state, hand_label, w, h):
     else:
         draw_calib_dots(frame, state, current_positions, hand_label)
 
-    return current_positions
+    # Compute normalised deltas from locked origin (None if not active)
+    deltas = {}
+    if state.is_active:
+        for name, norm in current_norm.items():
+            if name in state.c_origin_norm:
+                ox, oy, oz = state.c_origin_norm[name]
+                deltas[name] = (norm[0] - ox, norm[1] - oy, norm[2] - oz)
+
+    return current_positions, deltas
 
 
 # ── Main loop ────────────────────────────────────────────────────────────────
@@ -258,6 +274,10 @@ def run(source):
     prev_time = time.time()
     paused    = False
 
+    # UDP socket — fire-and-forget, non-blocking
+    udp_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    print(f"Broadcasting deltas → {UDP_HOST}:{UDP_PORT}")
+
     while cap.isOpened():
         if not paused:
             ok, frame = cap.read()
@@ -283,14 +303,21 @@ def run(source):
                     label = "Right" if label == "Left" else "Left"
                 detected_this_frame[label] = lm_list
 
-        # Process / reset each hand
+        # Process / reset each hand; collect deltas for UDP
+        packet = {}
         for label, state in states.items():
+            hand_key = label.lower()   # "left" / "right"
             if label in detected_this_frame:
-                process_hand(frame, detected_this_frame[label], state, label, w, h)
+                _, deltas = process_hand(frame, detected_this_frame[label], state, label, w, h)
+                for finger, delta in deltas.items():
+                    packet[f"{hand_key}_{finger}"] = list(delta)
             else:
                 if state.is_active:
                     print(f"Hand lost — resetting. ({label})")
                 state.reset()
+
+        # Broadcast deltas (empty dict = no active hands, Blender holds position)
+        udp_sock.sendto(json.dumps(packet).encode(), (UDP_HOST, UDP_PORT))
 
         # Detection zone overlay
         any_active = any(s.is_active for s in states.values())
@@ -318,6 +345,7 @@ def run(source):
     cap.release()
     cv2.destroyAllWindows()
     hands.close()
+    udp_sock.close()
     print("Done.")
 
 
