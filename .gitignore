@@ -2,3 +2,5 @@ __pycache__/
 *.pyc
 *.mov
 *.mp4
+.DS_Store
+gemini_convo.md
