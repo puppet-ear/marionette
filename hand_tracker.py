@@ -200,6 +200,6 @@ if __name__ == "__main__":
     elif args.video is not None:
         source = args.video
     else:
-        source = "/Users/Dhruv/Desktop/GB/Code/pupeteer/pupeteer_test.mov"
+        source = "/Users/Dhruv/Desktop/GB/Code/marionette/pupeteer_test.mov"
 
     run(source)
