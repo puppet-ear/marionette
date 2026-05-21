@@ -259,15 +259,17 @@ canvas#output {
 .tip-text {
   display: none;
   position: absolute;
-  right: 0;
+  left: 50%;
+  transform: translateX(-50%);
   top: calc(100% + 5px);
-  width: 168px;
+  width: 110px;
   background: var(--black);
   color: var(--white);
   padding: 6px 9px;
   font-size: 9px;
   line-height: 1.5;
   white-space: normal;
+  text-align: center;
   z-index: 100;
   pointer-events: none;
 }
@@ -356,7 +358,7 @@ input[type="range"] {
           <span class="s-label">port</span>
           <input type="number" id="relay-port" value="8765" min="1024" max="65535"
                  style="width:54px;font-family:var(--font);font-size:9.5px;border:1px solid var(--line);padding:2px 5px;background:transparent;color:var(--black);outline:none;">
-          <span class="tip">?<span class="tip-text">The port this page sends data to.<br>Must match Blender → Marionette tab → Settings → OSC Port.</span></span>
+          <span class="tip">?<span class="tip-text">OSC port must match Blender → Marionette tab → OSC Port</span></span>
         </div>
 
         <button class="btn" id="start-btn">start camera</button>
