@@ -1,12 +1,6 @@
 [build]
   publish = "."
 
-# Redirect bare domain to the fingers interface until a homepage exists
-[[redirects]]
-  from   = "/"
-  to     = "/interfaces/fingers.html"
-  status = 302
-
 # Headers required if MediaPipe ever needs SharedArrayBuffer (WASM threading)
 [[headers]]
   for = "/*"
