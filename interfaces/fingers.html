@@ -319,8 +319,9 @@ input[type="range"] {
         </div>
 
         <div class="s-row">
-          <span class="s-label">log</span>
-          <span class="s-text">data/session_*.csv</span>
+          <span class="s-label">relay</span>
+          <input type="text" id="relay-url" value="ws://localhost:8765"
+                 style="flex:1;font-family:var(--font);font-size:9.5px;border:1px solid var(--line);padding:2px 5px;background:transparent;color:var(--black);outline:none;">
         </div>
 
         <button class="btn" id="start-btn">start camera</button>
@@ -354,7 +355,9 @@ const BONES = [
   [17, 18],[18, 19],[19, 20],    // pinky
 ];
 
-const WS_URL = "ws://localhost:8765";
+function getRelayURL() {
+  return document.getElementById("relay-url")?.value || "ws://localhost:8765";
+}
 
 // ── One Euro Filter ───────────────────────────────────────────────────────────
 // Adaptive low-pass filter: heavy smoothing when still, light when moving fast.
@@ -431,7 +434,7 @@ function setDot(ok) {
 
 function connectWS() {
   try {
-    ws = new WebSocket(WS_URL);
+    ws = new WebSocket(getRelayURL());
     ws.onopen  = () => {};
     ws.onclose = () => { setTimeout(connectWS, 2000); };
     ws.onerror = () => {};
@@ -699,6 +702,11 @@ document.getElementById("start-btn").addEventListener("click", async function ()
     this.disabled    = false;
     console.error(err);
   }
+});
+
+document.getElementById("relay-url").addEventListener("change", () => {
+  if (ws) ws.onclose = null, ws.close();
+  connectWS();
 });
 
 connectWS();
