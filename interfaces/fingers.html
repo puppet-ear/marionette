@@ -166,6 +166,7 @@ canvas#output {
   display: flex;
   flex-direction: column;
   overflow-y: auto;
+  overflow-x: hidden;
   flex-shrink: 0;
 }
 
@@ -258,15 +259,15 @@ canvas#output {
 .tip-text {
   display: none;
   position: absolute;
-  left: 18px;
-  top: 50%;
-  transform: translateY(-50%);
+  right: 0;
+  top: calc(100% + 5px);
+  width: 168px;
   background: var(--black);
   color: var(--white);
   padding: 6px 9px;
   font-size: 9px;
   line-height: 1.5;
-  white-space: nowrap;
+  white-space: normal;
   z-index: 100;
   pointer-events: none;
 }
