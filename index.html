@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Marionette</title>
+<link href="https://fonts.googleapis.com/css2?family=Tiro+Tamil:ital@1&display=swap" rel="stylesheet">
 <style>
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -35,11 +36,13 @@ header {
 }
 
 #header-title {
-  font-family: var(--title);
-  font-size: 13px;
-  font-weight: 700;
-  letter-spacing: 0.15em;
-  text-transform: uppercase;
+  font-family: "Tiro Tamil", serif;
+  font-style: italic;
+  font-size: 15px;
+  font-weight: 400;
+  letter-spacing: 0.02em;
+  color: var(--black);
+  text-decoration: none;
 }
 
 #header-sub {
@@ -113,7 +116,7 @@ h2 {
 <body>
 
 <header>
-  <span id="header-title">Marionette</span>
+  <a id="header-title" href="/">Marionette</a>
   <span id="header-sub">browser input interfaces for Blender</span>
 </header>
 

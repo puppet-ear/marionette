@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Marionette — Fingers</title>
+<link href="https://fonts.googleapis.com/css2?family=Tiro+Tamil:ital@1&display=swap" rel="stylesheet">
 <style>
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -46,11 +47,13 @@ html, body {
 
 #header-title {
   padding: 0 16px;
-  font-family: var(--title);
-  font-size: 13px;
-  font-weight: 700;
-  letter-spacing: 0.15em;
-  text-transform: uppercase;
+  font-family: "Tiro Tamil", serif;
+  font-style: italic;
+  font-size: 15px;
+  font-weight: 400;
+  letter-spacing: 0.02em;
+  text-decoration: none;
+  color: var(--black);
   border-right: 1px solid var(--line);
   height: 100%;
   display: flex;
@@ -239,6 +242,36 @@ canvas#output {
 
 .s-text { color: var(--mid); font-size: 9.5px; }
 
+.tip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 13px; height: 13px;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  font-size: 8px;
+  color: var(--mid);
+  cursor: help;
+  position: relative;
+  flex-shrink: 0;
+}
+.tip-text {
+  display: none;
+  position: absolute;
+  left: 18px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: var(--black);
+  color: var(--white);
+  padding: 6px 9px;
+  font-size: 9px;
+  line-height: 1.5;
+  white-space: nowrap;
+  z-index: 100;
+  pointer-events: none;
+}
+.tip:hover .tip-text { display: block; }
+
 input[type="range"] {
   flex: 1;
   accent-color: var(--black);
@@ -268,7 +301,7 @@ input[type="range"] {
 <body>
 
 <header id="header">
-  <div id="header-title">Marionette</div>
+  <a id="header-title" href="/">Marionette</a>
   <div id="header-sub">fingers</div>
   <div id="header-right">
     <span><span id="ws-dot"></span><span>server</span></span>
@@ -319,9 +352,10 @@ input[type="range"] {
         </div>
 
         <div class="s-row">
-          <span class="s-label">relay</span>
-          <input type="text" id="relay-url" value="ws://localhost:8765"
-                 style="flex:1;font-family:var(--font);font-size:9.5px;border:1px solid var(--line);padding:2px 5px;background:transparent;color:var(--black);outline:none;">
+          <span class="s-label">port</span>
+          <input type="number" id="relay-port" value="8765" min="1024" max="65535"
+                 style="width:54px;font-family:var(--font);font-size:9.5px;border:1px solid var(--line);padding:2px 5px;background:transparent;color:var(--black);outline:none;">
+          <span class="tip">?<span class="tip-text">Port for transport/relay.py running locally.<br>In Blender: Marionette tab → Settings → OSC Port.</span></span>
         </div>
 
         <button class="btn" id="start-btn">start camera</button>
@@ -356,7 +390,8 @@ const BONES = [
 ];
 
 function getRelayURL() {
-  return document.getElementById("relay-url")?.value || "ws://localhost:8765";
+  const port = document.getElementById("relay-port")?.value || "8765";
+  return `ws://localhost:${port}`;
 }
 
 // ── One Euro Filter ───────────────────────────────────────────────────────────
@@ -704,7 +739,7 @@ document.getElementById("start-btn").addEventListener("click", async function ()
   }
 });
 
-document.getElementById("relay-url").addEventListener("change", () => {
+document.getElementById("relay-port").addEventListener("change", () => {
   if (ws) ws.onclose = null, ws.close();
   connectWS();
 });
