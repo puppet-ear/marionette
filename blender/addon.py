@@ -484,7 +484,7 @@ class MARIONETTE_PT_main(Panel):
         cbox.separator(factor=0.5)
         cbox.label(text="Browser → WS port → Relay → OSC port → Blender",
                    icon="INFO")
-        cbox.label(text="Relay also forwards OSC to other tools on same port.")
+        cbox.label(text="Match your browser's port field to WS Port above.")
         cbox.separator(factor=0.5)
         status = _relay_status()
         relay_row = cbox.row(align=True)
