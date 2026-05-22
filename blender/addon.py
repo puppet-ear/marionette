@@ -25,8 +25,11 @@ bl_info = {
 }
 
 import bpy
+import pathlib
 import socket
 import struct
+import subprocess
+import sys
 import threading
 from bpy.props import EnumProperty, FloatProperty, IntProperty, PointerProperty
 from bpy.types import Object, Panel, Operator, PropertyGroup
@@ -75,14 +78,16 @@ def _norm_to_blender(x, y, z, scale):
 # ── Shared runtime state ──────────────────────────────────────────────────────
 
 _rt = {
-    "running": False,
-    "sock":    None,
-    "thread":  None,
-    "latest":  {},           # {name: (x, y, z)}  raw normalised
-    "lock":    threading.Lock(),
-    "smooth":  {},           # {name: (bx, by, bz)}
-    "count":   0,
-    "last":    "",
+    "running":     False,
+    "sock":        None,
+    "thread":      None,
+    "latest":      {},           # {name: (x, y, z)}  raw normalised
+    "lock":        threading.Lock(),
+    "smooth":      {},           # {name: (bx, by, bz)}
+    "count":       0,
+    "last":        "",
+    "relay_proc":  None,         # subprocess if we launched it
+    "relay_owned": False,        # True only if we started it
 }
 
 
@@ -115,6 +120,31 @@ def _stop():
     if _rt["thread"]:
         _rt["thread"].join(timeout=1.0)
         _rt["thread"] = None
+    if _rt["relay_owned"] and _rt["relay_proc"]:
+        _rt["relay_proc"].terminate()
+        _rt["relay_proc"]  = None
+        _rt["relay_owned"] = False
+
+
+def _relay_running():
+    """Check if something is already listening on the WS port."""
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.settimeout(0.3)
+        s.connect(("localhost", 8765))
+        s.close()
+        return True
+    except OSError:
+        return False
+
+
+def _relay_status():
+    proc = _rt.get("relay_proc")
+    if proc and proc.poll() is None:
+        return "running (launched by Blender)"
+    if _relay_running():
+        return "running (external)"
+    return "stopped"
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -248,8 +278,15 @@ class MarionetteProperties(PropertyGroup):
         default="fingers",
     )
 
-    port: IntProperty(
-        name="OSC Port", default=7700, min=1024, max=65535)
+    ws_port: IntProperty(
+        name="WS Port",
+        default=8765, min=1024, max=65535,
+        description="WebSocket port the relay listens on. Must match the port field in the browser.")
+
+    osc_port: IntProperty(
+        name="OSC Port",
+        default=7700, min=1024, max=65535,
+        description="OSC/UDP port Blender listens on. Must match the relay's OSC port. Auto-increments if busy.")
 
     scale: FloatProperty(
         name="Scale", default=3.0, min=0.1, max=20.0, step=10,
@@ -303,12 +340,29 @@ class MARIONETTE_OT_start(Operator):
         sock  = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         sock.settimeout(0.5)
-        try:
-            sock.bind(("0.0.0.0", props.port))
-        except OSError as e:
-            self.report({"ERROR"}, f"Cannot bind port {props.port}: {e}")
+
+        # OSC port: try requested port, auto-increment up to 10 times if busy
+        found = None
+        for candidate in range(props.osc_port, props.osc_port + 10):
+            try:
+                sock.bind(("0.0.0.0", candidate))
+                found = candidate
+                break
+            except OSError:
+                continue
+
+        if found is None:
+            self.report({"ERROR"},
+                f"OSC ports {props.osc_port}–{props.osc_port+9} all busy. "
+                f"Change OSC Port manually and update the relay to match.")
             sock.close()
             return {"CANCELLED"}
+
+        if found != props.osc_port:
+            self.report({"WARNING"},
+                f"OSC port {props.osc_port} was busy — now using {found}. "
+                f"Update the relay's OSC port to {found}.")
+            props.osc_port = found
 
         _rt.update(running=True, sock=sock, latest={}, smooth={}, count=0, last="")
         t = threading.Thread(target=_listen, args=(sock,), daemon=True)
@@ -319,7 +373,7 @@ class MARIONETTE_OT_start(Operator):
         self._timer = wm.event_timer_add(0.016, window=context.window)
         wm.modal_handler_add(self)
 
-        self.report({"INFO"}, f"Marionette listening on OSC port {props.port}")
+        self.report({"INFO"}, f"Listening — OSC port {found}")
         return {"RUNNING_MODAL"}
 
     def cancel(self, context):
@@ -335,6 +389,59 @@ class MARIONETTE_OT_stop(Operator):
     def execute(self, context):
         _stop()
         self.report({"INFO"}, "Marionette stopped")
+        return {"FINISHED"}
+
+
+class MARIONETTE_OT_launch_relay(Operator):
+    bl_idname      = "marionette.launch_relay"
+    bl_label       = "Launch Relay"
+    bl_description = "Start relay.py with the current WS and OSC ports"
+
+    def execute(self, context):
+        if _rt["relay_proc"] and _rt["relay_proc"].poll() is None:
+            self.report({"WARNING"}, "Relay already running (launched by Blender)")
+            return {"CANCELLED"}
+        if _relay_running():
+            self.report({"WARNING"}, "Relay already running externally — not launching another")
+            return {"CANCELLED"}
+
+        props      = context.scene.marionette
+        relay_path = pathlib.Path(__file__).parent.parent / "transport" / "relay.py"
+        if not relay_path.exists():
+            self.report({"ERROR"}, f"relay.py not found at {relay_path}")
+            return {"CANCELLED"}
+
+        try:
+            proc = subprocess.Popen(
+                [sys.executable, str(relay_path),
+                 "--ws-port",  str(props.ws_port),
+                 "--osc-port", str(props.osc_port)],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            _rt["relay_proc"]  = proc
+            _rt["relay_owned"] = True
+            self.report({"INFO"},
+                f"Relay started  WS:{props.ws_port} → OSC:{props.osc_port}")
+        except Exception as e:
+            self.report({"ERROR"}, f"Failed to launch relay: {e}")
+            return {"CANCELLED"}
+        return {"FINISHED"}
+
+
+class MARIONETTE_OT_stop_relay(Operator):
+    bl_idname      = "marionette.stop_relay"
+    bl_label       = "Stop Relay"
+    bl_description = "Stop the relay launched by Blender"
+
+    def execute(self, context):
+        if not (_rt["relay_owned"] and _rt["relay_proc"]):
+            self.report({"WARNING"}, "No relay was launched by Blender")
+            return {"CANCELLED"}
+        _rt["relay_proc"].terminate()
+        _rt["relay_proc"]  = None
+        _rt["relay_owned"] = False
+        self.report({"INFO"}, "Relay stopped")
         return {"FINISHED"}
 
 
@@ -368,11 +475,33 @@ class MARIONETTE_PT_main(Panel):
 
         layout.separator()
 
-        # Core settings
-        box = layout.box()
-        box.label(text="Settings", icon="PREFERENCES")
-        col = box.column(align=True)
-        col.prop(props, "port")
+        # ── Connection ────────────────────────────────────────────────────────
+        cbox = layout.box()
+        cbox.label(text="Connection", icon="NETWORK_DRIVE")
+        col = cbox.column(align=True)
+        col.prop(props, "ws_port")
+        col.prop(props, "osc_port")
+        cbox.separator(factor=0.5)
+        cbox.label(text="Browser → WS port → Relay → OSC port → Blender",
+                   icon="INFO")
+        cbox.label(text="Relay also forwards OSC to other tools on same port.")
+        cbox.separator(factor=0.5)
+        status = _relay_status()
+        relay_row = cbox.row(align=True)
+        owned = _rt["relay_owned"] and _rt["relay_proc"] and _rt["relay_proc"].poll() is None
+        if owned:
+            relay_row.alert = True
+            relay_row.operator("marionette.stop_relay",   text="Stop Relay",   icon="CANCEL")
+        else:
+            relay_row.operator("marionette.launch_relay", text="Launch Relay", icon="PLAY")
+        cbox.label(text=f"relay: {status}")
+
+        layout.separator()
+
+        # ── Settings ──────────────────────────────────────────────────────────
+        sbox = layout.box()
+        sbox.label(text="Settings", icon="PREFERENCES")
+        col = sbox.column(align=True)
         col.prop(props, "scale",     slider=True)
         col.prop(props, "smoothing", slider=True)
 
@@ -385,7 +514,7 @@ class MARIONETTE_PT_main(Panel):
 
         layout.separator()
 
-        # Debug
+        # ── Debug ─────────────────────────────────────────────────────────────
         dbox = layout.box()
         dbox.label(text="Debug", icon="CONSOLE")
         with _rt["lock"]:
@@ -406,6 +535,8 @@ CLASSES = [
     MarionetteProperties,
     MARIONETTE_OT_start,
     MARIONETTE_OT_stop,
+    MARIONETTE_OT_launch_relay,
+    MARIONETTE_OT_stop_relay,
     MARIONETTE_PT_main,
 ]
 

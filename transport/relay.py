@@ -14,6 +14,7 @@ Usage:
     python relay.py
 """
 
+import argparse
 import asyncio
 import csv
 import json
@@ -22,10 +23,15 @@ import time
 import websockets
 from pythonosc.udp_client import SimpleUDPClient
 
+parser = argparse.ArgumentParser()
+parser.add_argument("--ws-port",  type=int, default=8765)
+parser.add_argument("--osc-port", type=int, default=7700)
+args = parser.parse_args()
+
 WS_HOST  = "localhost"
-WS_PORT  = 8765
+WS_PORT  = args.ws_port
 OSC_HOST = "127.0.0.1"
-OSC_PORT = 7700
+OSC_PORT = args.osc_port
 
 DATA_DIR = pathlib.Path(__file__).parent.parent / "data"
 
@@ -68,7 +74,7 @@ async def handler(ws):
 
 
 async def main():
-    print(f"relay  ws://{WS_HOST}:{WS_PORT}  →  osc://{OSC_HOST}:{OSC_PORT}")
+    print(f"relay  WS port {WS_PORT}  →  OSC port {OSC_PORT}")
     async with websockets.serve(handler, WS_HOST, WS_PORT):
         await asyncio.Future()
 
