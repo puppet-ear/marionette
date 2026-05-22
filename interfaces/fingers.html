@@ -520,7 +520,6 @@ async function startCamera() {
   video.srcObject = stream;
   await new Promise(r => (video.onloadeddata = r));
 
-  document.getElementById("hint").style.display = "none";
   document.getElementById("pip").style.display  = "block";
 
   running = true;
