@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Marionette</title>
+<link href="https://fonts.googleapis.com/css2?family=Tiro+Tamil:ital@1&display=swap" rel="stylesheet">
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --black: #0d0d0d;
+  --white: #ffffff;
+  --mid:   #999;
+  --line:  #e4e4e4;
+  --font:  "DejaVu Sans Mono", "JetBrains Mono", "Cascadia Code", monospace;
+  --title: "Helvetica Neue", Helvetica, Arial, sans-serif;
+}
+
+html, body {
+  height: 100%;
+  background: var(--white);
+  color: var(--black);
+  font-family: var(--font);
+  font-size: 12px;
+  -webkit-font-smoothing: antialiased;
+}
+
+header {
+  height: 40px;
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  align-items: center;
+  padding: 0 24px;
+  gap: 16px;
+}
+
+#header-title {
+  font-family: "Tiro Tamil", serif;
+  font-style: italic;
+  font-size: 15px;
+  font-weight: 400;
+  letter-spacing: 0.02em;
+  color: var(--black);
+  text-decoration: none;
+}
+
+#header-sub {
+  font-size: 10px;
+  color: var(--mid);
+}
+
+main {
+  max-width: 560px;
+  margin: 64px auto 0;
+  padding: 0 24px;
+}
+
+h2 {
+  font-family: var(--title);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+  color: var(--mid);
+  margin-bottom: 12px;
+}
+
+.interface-list {
+  list-style: none;
+  border-top: 1px solid var(--line);
+}
+
+.interface-list li {
+  border-bottom: 1px solid var(--line);
+}
+
+.interface-list a {
+  display: flex;
+  align-items: baseline;
+  gap: 16px;
+  padding: 14px 0;
+  text-decoration: none;
+  color: var(--black);
+}
+
+.interface-list a:hover .iface-name {
+  text-decoration: underline;
+}
+
+.iface-name {
+  font-size: 13px;
+  font-family: var(--title);
+  font-weight: 500;
+  min-width: 100px;
+}
+
+.iface-desc {
+  font-size: 10px;
+  color: var(--mid);
+}
+
+.iface-status {
+  margin-left: auto;
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--mid);
+}
+
+.iface-status.live {
+  color: var(--black);
+}
+</style>
+</head>
+<body>
+
+<header>
+  <a id="header-title" href="/">Marionette</a>
+  <span id="header-sub">instruments for Blender</span>
+</header>
+
+<main>
+  <h2>Interfaces</h2>
+  <ul class="interface-list">
+
+    <li>
+      <a href="/interfaces/fingers.html">
+        <span class="iface-name">Fingers</span>
+        <span class="iface-desc">Control Blender empties with your fingers.</span>
+        <span class="iface-status live">live</span>
+      </a>
+    </li>
+
+    <li>
+      <a href="/interfaces/joystick.html" style="pointer-events:none; opacity:0.4;">
+        <span class="iface-name">Joystick</span>
+        <span class="iface-desc">Gamepad / joystick input</span>
+        <span class="iface-status">soon</span>
+      </a>
+    </li>
+
+    <li>
+      <a href="/interfaces/audio.html" style="pointer-events:none; opacity:0.4;">
+        <span class="iface-name">Audio</span>
+        <span class="iface-desc">Microphone amplitude and frequency bands</span>
+        <span class="iface-status">soon</span>
+      </a>
+    </li>
+
+  </ul>
+</main>
+
+</body>
+</html>

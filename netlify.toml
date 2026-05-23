@@ -1,5 +1,5 @@
 [build]
-  publish = "."
+  publish = "web"
 
 # Headers required if MediaPipe ever needs SharedArrayBuffer (WASM threading)
 [[headers]]

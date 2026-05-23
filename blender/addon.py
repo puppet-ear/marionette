@@ -31,6 +31,7 @@ import struct
 import subprocess
 import sys
 import threading
+import time
 from bpy.props import EnumProperty, FloatProperty, IntProperty, PointerProperty
 from bpy.types import Object, Panel, Operator, PropertyGroup
 
@@ -69,7 +70,7 @@ def _parse_osc(data):
 
 def _norm_to_blender(x, y, z, scale):
     return (
-         (x - 0.5) * scale,
+         (0.5 - x) * scale,    # negate: camera-left = your right
         -(z * scale * 0.4),
         -(y - 0.5) * scale,
     )
@@ -78,16 +79,19 @@ def _norm_to_blender(x, y, z, scale):
 # ── Shared runtime state ──────────────────────────────────────────────────────
 
 _rt = {
-    "running":     False,
-    "sock":        None,
-    "thread":      None,
-    "latest":      {},           # {name: (x, y, z)}  raw normalised
-    "lock":        threading.Lock(),
-    "smooth":      {},           # {name: (bx, by, bz)}
-    "count":       0,
-    "last":        "",
-    "relay_proc":  None,         # subprocess if we launched it
-    "relay_owned": False,        # True only if we started it
+    "running":         False,
+    "sock":            None,
+    "thread":          None,
+    "latest":          {},
+    "lock":            threading.Lock(),
+    "smooth":          {},
+    "count":           0,
+    "last":            "",
+    "relay_proc":      None,
+    "relay_owned":     False,
+    "overlay_handle":  None,
+    "relay_check_ts":  0.0,
+    "relay_check_val": "stopped",
 }
 
 
@@ -109,6 +113,113 @@ def _listen(sock):
             pass
 
 
+# ── Viewport overlay ──────────────────────────────────────────────────────────
+
+_FINGER_ORDER = ["thumb", "index", "middle", "ring", "pinky"]
+_FINGER_LABEL = ["T", "I", "M", "R", "P"]
+_OV_W, _OV_H, _OV_PAD = 340, 270, 16
+
+
+def _filled_circle(shader, cx, cy, r, n=16):
+    from gpu_extras.batch import batch_for_shader
+    import math
+    perim = [(cx + r * math.cos(2 * math.pi * i / n),
+              cy + r * math.sin(2 * math.pi * i / n)) for i in range(n)]
+    batch_for_shader(shader, 'TRI_FAN', {"pos": [(cx, cy)] + perim + [perim[0]]}).draw(shader)
+
+
+def _stroke_circle(shader, cx, cy, r, n=16):
+    from gpu_extras.batch import batch_for_shader
+    import math
+    perim = [(cx + r * math.cos(2 * math.pi * i / n),
+              cy + r * math.sin(2 * math.pi * i / n)) for i in range(n + 1)]
+    batch_for_shader(shader, 'LINE_STRIP', {"pos": perim}).draw(shader)
+
+
+def _overlay_draw():
+    import blf
+    import gpu
+    from gpu_extras.batch import batch_for_shader
+
+    with _rt["lock"]:
+        latest = dict(_rt["latest"])
+
+    x0, y0 = _OV_PAD, _OV_PAD
+    W,  H  = _OV_W,   _OV_H
+    INK = (0.05, 0.05, 0.05)
+
+    def to_px(xyz):
+        x, y, z = xyz
+        return (x0 + (1.0 - x) * W, y0 + (1.0 - y) * H)
+
+    shader = gpu.shader.from_builtin('UNIFORM_COLOR')
+    gpu.state.blend_set('ALPHA')
+    shader.bind()
+
+    # White background
+    bg = [(x0, y0), (x0+W, y0), (x0+W, y0+H), (x0, y0+H)]
+    shader.uniform_float("color", (1.0, 1.0, 1.0, 0.92))
+    batch_for_shader(shader, 'TRI_FAN', {"pos": bg}).draw(shader)
+
+    # Border
+    shader.uniform_float("color", (*INK, 0.18))
+    gpu.state.line_width_set(1.0)
+    batch_for_shader(shader, 'LINE_STRIP', {"pos": bg + [bg[0]]}).draw(shader)
+
+    # "waiting" state
+    if not latest:
+        blf.size(0, 10)
+        blf.color(0, *INK, 0.35)
+        blf.position(0, x0 + 12, y0 + H // 2 - 5, 0)
+        blf.draw(0, "waiting for data…")
+
+    for hand in ("left", "right"):
+        pts = [to_px(latest[f"{hand}_{f}"]) if f"{hand}_{f}" in latest else None
+               for f in _FINGER_ORDER]
+        present = [p for p in pts if p]
+        if not present:
+            continue
+
+        cx = sum(p[0] for p in present) / len(present)
+        cy = sum(p[1] for p in present) / len(present)
+
+        # Spokes: palm centroid → each tip
+        spokes = [v for p in present for v in ((cx, cy), p)]
+        shader.uniform_float("color", (*INK, 0.12))
+        gpu.state.line_width_set(1.0)
+        batch_for_shader(shader, 'LINES', {"pos": spokes}).draw(shader)
+
+        # Arcs: adjacent fingertips (bone lines)
+        arcs = [v for a, b in zip(pts, pts[1:]) if a and b for v in (a, b)]
+        if arcs:
+            shader.uniform_float("color", (*INK, 0.75))
+            gpu.state.line_width_set(1.5)
+            batch_for_shader(shader, 'LINES', {"pos": arcs}).draw(shader)
+
+        # Fingertip joints: white fill + dark stroke
+        for p in present:
+            shader.uniform_float("color", (1.0, 1.0, 1.0, 1.0))
+            _filled_circle(shader, p[0], p[1], 5)
+            shader.uniform_float("color", (*INK, 1.0))
+            gpu.state.line_width_set(1.5)
+            _stroke_circle(shader, p[0], p[1], 5)
+
+        # Finger labels
+        blf.size(0, 9)
+        blf.color(0, *INK, 0.55)
+        for lbl, p in zip(_FINGER_LABEL, pts):
+            if p:
+                blf.position(0, p[0] + 7, p[1] - 3, 0)
+                blf.draw(0, lbl)
+
+        # Palm centroid — drawn last so always on top
+        shader.uniform_float("color", (*INK, 1.0))
+        _filled_circle(shader, cx, cy, 4)
+
+    gpu.state.blend_set('NONE')
+    gpu.state.line_width_set(1.0)
+
+
 def _stop():
     _rt["running"] = False
     if _rt["sock"]:
@@ -124,27 +235,36 @@ def _stop():
         _rt["relay_proc"].terminate()
         _rt["relay_proc"]  = None
         _rt["relay_owned"] = False
+    if _rt["overlay_handle"]:
+        try:
+            bpy.types.SpaceView3D.draw_handler_remove(_rt["overlay_handle"], 'WINDOW')
+        except Exception:
+            pass
+        _rt["overlay_handle"] = None
 
 
-def _relay_running():
-    """Check if something is already listening on the WS port."""
+def _relay_running(ws_port=8765):
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         s.settimeout(0.3)
-        s.connect(("localhost", 8765))
+        s.connect(("localhost", ws_port))
         s.close()
         return True
     except OSError:
         return False
 
 
-def _relay_status():
+def _relay_status(ws_port=8765):
     proc = _rt.get("relay_proc")
     if proc and proc.poll() is None:
         return "running (launched by Blender)"
-    if _relay_running():
-        return "running (external)"
-    return "stopped"
+    now = time.time()
+    if now - _rt["relay_check_ts"] < 1.0:
+        return _rt["relay_check_val"]
+    result = "running (external)" if _relay_running(ws_port) else "stopped"
+    _rt["relay_check_ts"]  = now
+    _rt["relay_check_val"] = result
+    return result
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -369,6 +489,10 @@ class MARIONETTE_OT_start(Operator):
         t.start()
         _rt["thread"] = t
 
+        handle = bpy.types.SpaceView3D.draw_handler_add(
+            _overlay_draw, (), 'WINDOW', 'POST_PIXEL')
+        _rt["overlay_handle"] = handle
+
         wm = context.window_manager
         self._timer = wm.event_timer_add(0.016, window=context.window)
         wm.modal_handler_add(self)
@@ -401,19 +525,19 @@ class MARIONETTE_OT_launch_relay(Operator):
         if _rt["relay_proc"] and _rt["relay_proc"].poll() is None:
             self.report({"WARNING"}, "Relay already running (launched by Blender)")
             return {"CANCELLED"}
-        if _relay_running():
+        props      = context.scene.marionette
+        if _relay_running(props.ws_port):
             self.report({"WARNING"}, "Relay already running externally — not launching another")
             return {"CANCELLED"}
 
-        props      = context.scene.marionette
-        relay_path = pathlib.Path(__file__).parent.parent / "transport" / "relay.py"
+        relay_path = pathlib.Path(__file__).parent.parent / "relay" / "relay.py"
         if not relay_path.exists():
             self.report({"ERROR"}, f"relay.py not found at {relay_path}")
             return {"CANCELLED"}
 
         try:
             proc = subprocess.Popen(
-                [sys.executable, str(relay_path),
+                ["/usr/bin/python3", str(relay_path),
                  "--ws-port",  str(props.ws_port),
                  "--osc-port", str(props.osc_port)],
                 stdout=subprocess.DEVNULL,
@@ -486,7 +610,7 @@ class MARIONETTE_PT_main(Panel):
                    icon="INFO")
         cbox.label(text="Match your browser's port field to WS Port above.")
         cbox.separator(factor=0.5)
-        status = _relay_status()
+        status = _relay_status(props.ws_port)
         relay_row = cbox.row(align=True)
         owned = _rt["relay_owned"] and _rt["relay_proc"] and _rt["relay_proc"].poll() is None
         if owned:
