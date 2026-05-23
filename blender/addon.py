@@ -25,6 +25,7 @@ bl_info = {
 }
 
 import bpy
+import math
 import pathlib
 import socket
 import struct
@@ -32,7 +33,7 @@ import subprocess
 import sys
 import threading
 import time
-from bpy.props import EnumProperty, FloatProperty, IntProperty, PointerProperty
+from bpy.props import BoolProperty, EnumProperty, FloatProperty, IntProperty, PointerProperty
 from bpy.types import Object, Panel, Operator, PropertyGroup
 
 
@@ -79,19 +80,19 @@ def _norm_to_blender(x, y, z, scale):
 # ── Shared runtime state ──────────────────────────────────────────────────────
 
 _rt = {
-    "running":         False,
-    "sock":            None,
-    "thread":          None,
-    "latest":          {},
-    "lock":            threading.Lock(),
-    "smooth":          {},
-    "count":           0,
-    "last":            "",
-    "relay_proc":      None,
-    "relay_owned":     False,
-    "overlay_handle":  None,
-    "relay_check_ts":  0.0,
-    "relay_check_val": "stopped",
+    "running":          False,
+    "sock":             None,
+    "thread":           None,
+    "latest":           {},           # {name: (x, y, z)}  raw normalised
+    "lock":             threading.Lock(),
+    "smooth":           {},           # {name: (bx, by, bz)}
+    "count":            0,
+    "last":             "",
+    "relay_proc":       None,         # subprocess if we launched it
+    "relay_owned":      False,        # True only if we started it
+    "overlay_handle":   None,
+    "relay_check_ts":   0.0,
+    "relay_check_val":  "stopped",
 }
 
 
@@ -222,6 +223,12 @@ def _overlay_draw():
 
 def _stop():
     _rt["running"] = False
+    if _rt["overlay_handle"]:
+        try:
+            bpy.types.SpaceView3D.draw_handler_remove(_rt["overlay_handle"], 'WINDOW')
+        except Exception:
+            pass
+        _rt["overlay_handle"] = None
     if _rt["sock"]:
         try:
             _rt["sock"].close()
@@ -525,11 +532,10 @@ class MARIONETTE_OT_launch_relay(Operator):
         if _rt["relay_proc"] and _rt["relay_proc"].poll() is None:
             self.report({"WARNING"}, "Relay already running (launched by Blender)")
             return {"CANCELLED"}
-        props      = context.scene.marionette
+        props = context.scene.marionette
         if _relay_running(props.ws_port):
             self.report({"WARNING"}, "Relay already running externally — not launching another")
             return {"CANCELLED"}
-
         relay_path = pathlib.Path(__file__).parent.parent / "relay" / "relay.py"
         if not relay_path.exists():
             self.report({"ERROR"}, f"relay.py not found at {relay_path}")
