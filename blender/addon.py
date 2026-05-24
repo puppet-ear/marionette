@@ -87,8 +87,6 @@ _rt = {
     "last":             "",
     "last_ts":          0.0,
     "overlay_handle":   None,
-    "relay_check_ts":   0.0,
-    "relay_check_val":  "stopped",
 }
 
 
@@ -237,28 +235,6 @@ def _stop():
         _rt["overlay_handle"] = None
 
 
-def _relay_running(ws_port=8765):
-    try:
-        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        s.settimeout(0.3)
-        s.connect(("localhost", ws_port))
-        s.close()
-        return True
-    except OSError:
-        return False
-
-
-def _relay_status(ws_port=8765):
-    proc = _rt.get("relay_proc")
-    if proc and proc.poll() is None:
-        return "running (launched by Blender)"
-    now = time.time()
-    if now - _rt["relay_check_ts"] < 1.0:
-        return _rt["relay_check_val"]
-    result = "running (external)" if _relay_running(ws_port) else "stopped"
-    _rt["relay_check_ts"]  = now
-    _rt["relay_check_val"] = result
-    return result
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -527,15 +503,6 @@ class MARIONETTE_PT_main(Panel):
         ports_row = layout.row(align=True)
         ports_row.prop(props, "ws_port")
         ports_row.prop(props, "osc_port")
-        status  = _relay_status(props.ws_port)
-        running = "running" in status
-        row = layout.row()
-        row.label(
-            text=f"rrelay: {status}",
-            icon="SEQUENCE_COLOR_04" if running else "SEQUENCE_COLOR_01",
-        )
-        if not running:
-            layout.label(text="launch rrelay, then press Start", icon="INFO")
 
         layout.separator()
 
