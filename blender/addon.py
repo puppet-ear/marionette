@@ -605,16 +605,19 @@ class MARIONETTE_PT_main(Panel):
 
         layout.separator()
 
+        # Interface-specific section — finger mapping etc.
+        iface = _INTERFACES.get(props.interface)
+        if iface:
+            iface["draw"](layout, props)
+
+        layout.separator()
+
         # ── Connection ────────────────────────────────────────────────────────
         cbox = layout.box()
         cbox.label(text="Connection", icon="NETWORK_DRIVE")
-        col = cbox.column(align=True)
-        col.prop(props, "ws_port")
-        col.prop(props, "osc_port")
-        cbox.separator(factor=0.5)
-        cbox.label(text="Browser → WS port → Relay → OSC port → Blender",
-                   icon="INFO")
-        cbox.label(text="Match your browser's port field to WS Port above.")
+        ports_row = cbox.row(align=True)
+        ports_row.prop(props, "ws_port")
+        ports_row.prop(props, "osc_port")
         cbox.separator(factor=0.5)
         status = _relay_status(props.ws_port)
         relay_row = cbox.row(align=True)
@@ -634,13 +637,6 @@ class MARIONETTE_PT_main(Panel):
         col = sbox.column(align=True)
         col.prop(props, "scale",     slider=True)
         col.prop(props, "smoothing", slider=True)
-
-        layout.separator()
-
-        # Interface-specific section — refreshes automatically on enum change
-        iface = _INTERFACES.get(props.interface)
-        if iface:
-            iface["draw"](layout, props)
 
         layout.separator()
 
