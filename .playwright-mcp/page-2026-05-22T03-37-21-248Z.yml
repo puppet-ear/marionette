@@ -1,0 +1,31 @@
+- generic [active] [ref=e1]:
+  - banner [ref=e2]:
+    - link "Marionette" [ref=e3] [cursor=pointer]:
+      - /url: /
+    - generic [ref=e4]: fingers
+    - generic [ref=e5]:
+      - generic [ref=e6]: server
+      - generic [ref=e8]: —
+  - generic [ref=e9]:
+    - button "start camera" [ref=e12] [cursor=pointer]
+    - complementary [ref=e13]:
+      - generic [ref=e14]:
+        - generic [ref=e15]: Left
+        - generic [ref=e17]: no hand
+      - generic [ref=e18]:
+        - generic [ref=e19]: Right
+        - generic [ref=e21]: no hand
+      - generic [ref=e22]:
+        - generic [ref=e23]: Settings
+        - generic [ref=e24]:
+          - generic [ref=e25]:
+            - generic [ref=e26]: smoothing
+            - slider [ref=e27] [cursor=pointer]: "0.5"
+            - generic [ref=e28]: "1.26"
+          - generic [ref=e29]:
+            - generic [ref=e30]: debug
+            - button "off" [ref=e31] [cursor=pointer]
+          - generic [ref=e32]:
+            - generic [ref=e33]: port
+            - spinbutton [ref=e34]: "8765"
+            - generic [ref=e35]: "?"
