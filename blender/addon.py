@@ -304,7 +304,7 @@ def _draw_fingers(layout, props):
     fp = props.fingers
 
     box = layout.box()
-    box.label(text="Finger Mapping", icon="HAND")
+    box.label(text="finger001", icon="HAND")
 
     header = box.row()
     header.column().label(text="← LEFT")
@@ -375,9 +375,9 @@ def _handle_audio(name, xyz, props, scene, scale, alpha):
 # and to the EnumProperty items list below.
 
 _INTERFACES = {
-    "fingers":  {"draw": _draw_fingers,  "handle": _handle_fingers},
-    "joystick": {"draw": _draw_joystick, "handle": _handle_joystick},
-    "audio":    {"draw": _draw_audio,    "handle": _handle_audio},
+    "finger001": {"draw": _draw_fingers,  "handle": _handle_fingers},
+    "joystick":  {"draw": _draw_joystick, "handle": _handle_joystick},
+    "audio":     {"draw": _draw_audio,    "handle": _handle_audio},
 }
 
 
@@ -388,11 +388,11 @@ class MarionetteProperties(PropertyGroup):
     interface: EnumProperty(
         name="Interface",
         items=[
-            ("fingers",  "Fingers",  "Hand finger tracking"),
-            ("joystick", "Joystick", "Joystick / gamepad control"),
-            ("audio",    "Audio",    "Audio-reactive control"),
+            ("finger001", "finger001", "Hand finger tracking"),
+            ("joystick",  "joystick",  "Joystick / gamepad control"),
+            ("audio",     "audio",     "Audio-reactive control"),
         ],
-        default="fingers",
+        default="finger001",
     )
 
     ws_port: IntProperty(
@@ -570,11 +570,11 @@ class MARIONETTE_OT_stop_relay(Operator):
 # ── Panel ─────────────────────────────────────────────────────────────────────
 
 class MARIONETTE_PT_main(Panel):
-    bl_label       = "Marionette"
+    bl_label       = "marionettes"
     bl_idname      = "MARIONETTE_PT_main"
     bl_space_type  = "VIEW_3D"
     bl_region_type = "UI"
-    bl_category    = "Marionette"
+    bl_category    = "marionettes"
 
     def draw(self, context):
         layout = self.layout
@@ -616,24 +616,17 @@ class MARIONETTE_PT_main(Panel):
         layout.separator()
 
         # ── Debug (collapsible) ───────────────────────────────────────────────
-        with _rt["lock"]:
-            count    = _rt["count"]
-            last_ts  = _rt["last_ts"]
-            latest   = dict(_rt["latest"])
-
-        dbox    = layout.box()
-        hdr     = dbox.row()
+        dbox = layout.box()
+        hdr  = dbox.row()
         hdr.prop(props, "debug_expanded",
                  icon="TRIA_DOWN" if props.debug_expanded else "TRIA_RIGHT",
                  icon_only=True, emboss=False)
-        hdr.label(text="Debug", icon="CONSOLE")
-        if last_ts:
-            hdr.label(text=time.strftime("%H:%M:%S", time.localtime(last_ts)))
+        hdr.label(text="debug", icon="CONSOLE")
 
         if props.debug_expanded:
+            with _rt["lock"]:
+                latest = dict(_rt["latest"])
             col = dbox.column(align=True)
-            col.label(text=f"packets received: {count}")
-            col.separator(factor=0.3)
             if latest:
                 for hand in ("left", "right"):
                     for finger in _FINGER_ORDER:
@@ -642,7 +635,7 @@ class MARIONETTE_PT_main(Panel):
                             col.label(text=f"{hand[0]}_{finger[:3]}  "
                                           f"{xyz[0]:.3f}  {xyz[1]:.3f}  {xyz[2]:.3f}")
             else:
-                col.label(text="no data yet", icon="ERROR")
+                col.label(text="no data", icon="ERROR")
 
 
 # ── Registration ──────────────────────────────────────────────────────────────
