@@ -355,6 +355,12 @@ input[type="range"] {
         </div>
 
         <div class="s-row">
+          <span class="s-label">curl</span>
+          <input type="range" id="curl" min="0" max="1" step="0.05" value="0.7">
+          <span class="s-val" id="curl-val">0.70</span>
+        </div>
+
+        <div class="s-row">
           <span class="s-label">debug</span>
           <button class="btn" id="debug-btn">off</button>
         </div>
@@ -528,6 +534,8 @@ async function startCamera() {
 
 // ── Extended finger detection ─────────────────────────────────────────────────
 
+let curlThreshold = 0.7;
+
 function extendedFingers(lms) {
   const w = lms[0];
   const ext = new Set();
@@ -536,7 +544,7 @@ function extendedFingers(lms) {
     const tip = lms[tipIdx], pip = lms[pipIdx];
     const tipD = Math.hypot(tip.x - w.x, tip.y - w.y, tip.z - w.z);
     const pipD = Math.hypot(pip.x - w.x, pip.y - w.y, pip.z - w.z);
-    if (tipD > pipD) ext.add(name);
+    if (tipD > pipD * curlThreshold) ext.add(name);
   }
   return ext;
 }
@@ -718,6 +726,11 @@ document.getElementById("debug-btn").addEventListener("click", function () {
   debugMode = !debugMode;
   this.textContent = debugMode ? "on" : "off";
   this.classList.toggle("running", debugMode);
+});
+
+document.getElementById("curl").addEventListener("input", e => {
+  curlThreshold = parseFloat(e.target.value);
+  document.getElementById("curl-val").textContent = curlThreshold.toFixed(2);
 });
 
 document.getElementById("smoothing").addEventListener("input", e => {
