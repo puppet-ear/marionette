@@ -26,11 +26,8 @@ bl_info = {
 
 import bpy
 import math
-import pathlib
 import socket
 import struct
-import subprocess
-import sys
 import threading
 import time
 from bpy.props import BoolProperty, EnumProperty, FloatProperty, IntProperty, PointerProperty
@@ -89,8 +86,6 @@ _rt = {
     "count":            0,
     "last":             "",
     "last_ts":          0.0,
-    "relay_proc":       None,         # subprocess if we launched it
-    "relay_owned":      False,        # True only if we started it
     "overlay_handle":   None,
     "relay_check_ts":   0.0,
     "relay_check_val":  "stopped",
@@ -170,12 +165,6 @@ def _overlay_draw():
     batch_for_shader(shader, 'LINE_STRIP', {"pos": bg + [bg[0]]}).draw(shader)
 
     # "waiting" state
-    if not latest:
-        blf.size(0, 10)
-        blf.color(0, *INK, 0.35)
-        blf.position(0, x0 + 12, y0 + H // 2 - 5, 0)
-        blf.draw(0, "waiting for data…")
-
     for hand in ("left", "right"):
         pts = [to_px(latest[f"{hand}_{f}"]) if f"{hand}_{f}" in latest else None
                for f in _FINGER_ORDER]
@@ -240,10 +229,6 @@ def _stop():
     if _rt["thread"]:
         _rt["thread"].join(timeout=1.0)
         _rt["thread"] = None
-    if _rt["relay_owned"] and _rt["relay_proc"]:
-        _rt["relay_proc"].terminate()
-        _rt["relay_proc"]  = None
-        _rt["relay_owned"] = False
     if _rt["overlay_handle"]:
         try:
             bpy.types.SpaceView3D.draw_handler_remove(_rt["overlay_handle"], 'WINDOW')
@@ -515,58 +500,6 @@ class MARIONETTE_OT_stop(Operator):
         return {"FINISHED"}
 
 
-class MARIONETTE_OT_launch_relay(Operator):
-    bl_idname      = "marionette.launch_relay"
-    bl_label       = "Launch Relay"
-    bl_description = "Start relay.py with the current WS and OSC ports"
-
-    def execute(self, context):
-        if _rt["relay_proc"] and _rt["relay_proc"].poll() is None:
-            self.report({"WARNING"}, "Relay already running (launched by Blender)")
-            return {"CANCELLED"}
-        props = context.scene.marionette
-        if _relay_running(props.ws_port):
-            self.report({"WARNING"}, "Relay already running externally — not launching another")
-            return {"CANCELLED"}
-        relay_path = pathlib.Path(__file__).parent.parent / "relay" / "rrelay.py"
-        if not relay_path.exists():
-            self.report({"ERROR"}, f"relay.py not found at {relay_path}")
-            return {"CANCELLED"}
-
-        try:
-            proc = subprocess.Popen(
-                ["/usr/bin/python3", str(relay_path),
-                 "--ws-port",  str(props.ws_port),
-                 "--osc-port", str(props.osc_port)],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            )
-            _rt["relay_proc"]  = proc
-            _rt["relay_owned"] = True
-            self.report({"INFO"},
-                f"Relay started  WS:{props.ws_port} → OSC:{props.osc_port}")
-        except Exception as e:
-            self.report({"ERROR"}, f"Failed to launch relay: {e}")
-            return {"CANCELLED"}
-        return {"FINISHED"}
-
-
-class MARIONETTE_OT_stop_relay(Operator):
-    bl_idname      = "marionette.stop_relay"
-    bl_label       = "Stop Relay"
-    bl_description = "Stop the relay launched by Blender"
-
-    def execute(self, context):
-        if not (_rt["relay_owned"] and _rt["relay_proc"]):
-            self.report({"WARNING"}, "No relay was launched by Blender")
-            return {"CANCELLED"}
-        _rt["relay_proc"].terminate()
-        _rt["relay_proc"]  = None
-        _rt["relay_owned"] = False
-        self.report({"INFO"}, "Relay stopped")
-        return {"FINISHED"}
-
-
 # ── Panel ─────────────────────────────────────────────────────────────────────
 
 class MARIONETTE_PT_main(Panel):
@@ -594,15 +527,15 @@ class MARIONETTE_PT_main(Panel):
         ports_row = layout.row(align=True)
         ports_row.prop(props, "ws_port")
         ports_row.prop(props, "osc_port")
-        status = _relay_status(props.ws_port)
-        owned  = _rt["relay_owned"] and _rt["relay_proc"] and _rt["relay_proc"].poll() is None
-        relay_row = layout.row(align=True)
-        if owned:
-            relay_row.alert = True
-            relay_row.operator("marionette.stop_relay",   text="Stop Relay",   icon="CANCEL")
-        else:
-            relay_row.operator("marionette.launch_relay", text="Launch Relay", icon="PLAY")
-        layout.label(text=f"relay: {status}")
+        status  = _relay_status(props.ws_port)
+        running = "running" in status
+        row = layout.row()
+        row.label(
+            text=f"rrelay: {status}",
+            icon="SEQUENCE_COLOR_04" if running else "SEQUENCE_COLOR_01",
+        )
+        if not running:
+            layout.label(text="launch rrelay, then press Start", icon="INFO")
 
         layout.separator()
 
@@ -646,8 +579,6 @@ CLASSES = [
     MarionetteProperties,
     MARIONETTE_OT_start,
     MARIONETTE_OT_stop,
-    MARIONETTE_OT_launch_relay,
-    MARIONETTE_OT_stop_relay,
     MARIONETTE_PT_main,
 ]
 
