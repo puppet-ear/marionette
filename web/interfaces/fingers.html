@@ -356,8 +356,8 @@ input[type="range"] {
 
         <div class="s-row">
           <span class="s-label">curl</span>
-          <input type="range" id="curl" min="0" max="1" step="0.05" value="0.7">
-          <span class="s-val" id="curl-val">0.70</span>
+          <input type="range" id="curl" min="0" max="1" step="0.05" value="0">
+          <span class="s-val" id="curl-val">0.00</span>
         </div>
 
         <div class="s-row">
@@ -534,7 +534,7 @@ async function startCamera() {
 
 // ── Extended finger detection ─────────────────────────────────────────────────
 
-let curlThreshold = 0.7;
+let curlThreshold = 0.0;
 
 function extendedFingers(lms) {
   const w = lms[0];
