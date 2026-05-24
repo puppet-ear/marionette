@@ -1,6 +1,0 @@
-[    4114ms] [ERROR] WebSocket connection to 'ws://localhost:8765/' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://localhost:3000/interfaces/fingers.html:452
-[    9280ms] [ERROR] WebSocket connection to 'ws://localhost:8765/' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://localhost:3000/interfaces/fingers.html:452
-[   13782ms] [ERROR] WebSocket connection to 'ws://localhost:8765/' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://localhost:3000/interfaces/fingers.html:452
-[   20116ms] [ERROR] WebSocket connection to 'ws://localhost:8765/' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://localhost:3000/interfaces/fingers.html:452
-[   25839ms] [ERROR] WebSocket connection to 'ws://localhost:8765/' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://localhost:3000/interfaces/fingers.html:452
-[   30736ms] [ERROR] WebSocket connection to 'ws://localhost:8765/' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://localhost:3000/interfaces/fingers.html:452

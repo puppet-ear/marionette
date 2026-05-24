@@ -5,3 +5,4 @@ __pycache__/
 .DS_Store
 gemini_convo.md
 data/
+.playwright-mcp/
