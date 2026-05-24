@@ -45,6 +45,7 @@ class RRelayApp(rumps.App):
         self.ws_item = rumps.MenuItem(f"WS Port: {self.ws_port}", callback=self.set_ws_port)
         self.osc_item = rumps.MenuItem(f"OSC Port: {self.osc_port}", callback=self.set_osc_port)
         self.log_item = rumps.MenuItem("Open Logs", callback=self.open_logs)
+        self.kill_item = rumps.MenuItem("Kill port…", callback=self.kill_port)
         quit_item = rumps.MenuItem("Quit", callback=rumps.quit_application)
 
         self.menu = [
@@ -55,6 +56,7 @@ class RRelayApp(rumps.App):
             self.ws_item,
             self.osc_item,
             None,
+            self.kill_item,
             self.log_item,
             quit_item,
         ]
@@ -147,6 +149,35 @@ class RRelayApp(rumps.App):
                 log.info(f"OSC port → {self.osc_port}")
             except ValueError:
                 rumps.alert("Invalid port number.")
+
+    def kill_port(self, _):
+        result = subprocess.run(
+            ["lsof", "-ti", f":{self.ws_port}"],
+            capture_output=True, text=True,
+        )
+        pids = result.stdout.strip().split()
+        if not pids:
+            rumps.alert(f"Nothing on port {self.ws_port}.")
+            return
+        # look up process names for each pid
+        lines = []
+        for pid in pids:
+            info = subprocess.run(
+                ["ps", "-p", pid, "-o", "pid=,comm="],
+                capture_output=True, text=True,
+            ).stdout.strip()
+            lines.append(info or pid)
+        msg = "\n".join(lines)
+        resp = rumps.alert(
+            title=f"Kill port {self.ws_port}?",
+            message=f"These processes are using it:\n\n{msg}\n\nKill them?",
+            ok="Kill",
+            cancel="Cancel",
+        )
+        if resp == 1:
+            for pid in pids:
+                subprocess.run(["kill", "-9", pid])
+            log.info(f"Killed pids {pids} on port {self.ws_port}")
 
     def open_logs(self, _):
         os.system(f"open '{LOG_DIR}'")
