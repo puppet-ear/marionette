@@ -19,7 +19,7 @@ import time
 import rumps
 
 HERE = pathlib.Path(__file__).parent
-RELAY_PY = HERE / "relay.py"
+RELAY_PY = HERE / "rrelay.py"
 
 LOG_DIR = pathlib.Path.home() / "Library" / "Logs" / "Strings"
 LOG_DIR.mkdir(parents=True, exist_ok=True)
@@ -32,15 +32,15 @@ logging.basicConfig(
 log = logging.getLogger("strings")
 
 
-class StringsApp(rumps.App):
+class RRelayApp(rumps.App):
     def __init__(self):
-        super().__init__("Strings", quit_button=None)
+        super().__init__("rrelay", quit_button=None)
         self.ws_port = 8765
         self.osc_port = 7700
         self._proc = None
         self._log_fh = None
 
-        self.status_item = rumps.MenuItem("● Stopped")
+        self.status_item = rumps.MenuItem("stopped")
         self.toggle_item = rumps.MenuItem("Start", callback=self.toggle)
         self.ws_item = rumps.MenuItem(f"WS Port: {self.ws_port}", callback=self.set_ws_port)
         self.osc_item = rumps.MenuItem(f"OSC Port: {self.osc_port}", callback=self.set_osc_port)
@@ -114,7 +114,8 @@ class StringsApp(rumps.App):
             rumps.notification("Strings", "Relay stopped", f"Exit code {rc}. Open Logs for details.")
 
     def _update_status(self, running):
-        self.status_item.title = "● Running" if running else "● Stopped"
+        self.title = "🟢 rrelay" if running else "rrelay"
+        self.status_item.title = "running" if running else "stopped"
         self.toggle_item.title = "Stop" if running else "Start"
 
     def set_ws_port(self, _):
@@ -152,4 +153,4 @@ class StringsApp(rumps.App):
 
 
 if __name__ == "__main__":
-    StringsApp().run()
+    RRelayApp().run()

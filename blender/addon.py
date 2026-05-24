@@ -528,7 +528,7 @@ class MARIONETTE_OT_launch_relay(Operator):
         if _relay_running(props.ws_port):
             self.report({"WARNING"}, "Relay already running externally — not launching another")
             return {"CANCELLED"}
-        relay_path = pathlib.Path(__file__).parent.parent / "relay" / "relay.py"
+        relay_path = pathlib.Path(__file__).parent.parent / "relay" / "rrelay.py"
         if not relay_path.exists():
             self.report({"ERROR"}, f"relay.py not found at {relay_path}")
             return {"CANCELLED"}
