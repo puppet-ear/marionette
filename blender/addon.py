@@ -89,29 +89,31 @@ _rt = {
     "overlay_handle":   None,
     "mouth_ratio":      0.0,
     "mouth_latch":      False,
+    "mouth_wants_stop": False,        # signal from watcher → modal
 }
 
 
 def _listen(sock):
-    while _rt["running"]:
+    """Run until the socket is closed. Always processes /control/mouth;
+    processes /empty/* only while _rt['running']."""
+    while True:
         try:
             data, _ = sock.recvfrom(4096)
             result  = _parse_osc(data)
             if result is None:
                 continue
             addr, args = result
-            if addr.startswith("/empty/") and len(args) >= 3:
+            if addr == "/control/mouth" and len(args) >= 1:
+                _rt["mouth_ratio"] = float(args[0])
+            elif _rt["running"] and addr.startswith("/empty/") and len(args) >= 3:
                 name = addr[7:]
                 with _rt["lock"]:
                     _rt["latest"][name] = tuple(args[:3])
                     _rt["count"]       += 1
                     _rt["last"]         = f"{addr}  [{args[0]:.3f}  {args[1]:.3f}  {args[2]:.3f}]"
                     _rt["last_ts"]      = time.time()
-            elif addr == "/control/mouth" and len(args) >= 1:
-                with _rt["lock"]:
-                    _rt["mouth_ratio"] = float(args[0])
         except OSError:
-            pass
+            break  # socket closed — exit
 
 
 # ── Viewport overlay ──────────────────────────────────────────────────────────
@@ -216,6 +218,7 @@ def _overlay_draw():
 
 
 def _stop():
+    """Stop applying positions and remove overlay. Keep socket alive for mouth detection."""
     _rt["running"] = False
     if _rt["overlay_handle"]:
         try:
@@ -223,6 +226,11 @@ def _stop():
         except Exception:
             pass
         _rt["overlay_handle"] = None
+
+
+def _full_stop():
+    """Close socket and thread — called only on unregister."""
+    _stop()
     if _rt["sock"]:
         try:
             _rt["sock"].close()
@@ -232,12 +240,35 @@ def _stop():
     if _rt["thread"]:
         _rt["thread"].join(timeout=1.0)
         _rt["thread"] = None
-    if _rt["overlay_handle"]:
-        try:
-            bpy.types.SpaceView3D.draw_handler_remove(_rt["overlay_handle"], 'WINDOW')
-        except Exception:
-            pass
-        _rt["overlay_handle"] = None
+
+
+def _invoke_start_operator():
+    for window in bpy.context.window_manager.windows:
+        for area in window.screen.areas:
+            if area.type == 'VIEW_3D':
+                with bpy.context.temp_override(window=window, area=area):
+                    bpy.ops.marionette.start()
+                return
+
+
+def _mouth_watcher():
+    try:
+        props = bpy.context.scene.marionette
+        if not props.mouth_toggle:
+            return 0.05
+    except Exception:
+        return 0.05
+    ratio = _rt["mouth_ratio"]
+    latch = _rt["mouth_latch"]
+    if ratio > 0.6 and not latch:
+        _rt["mouth_latch"] = True
+        if _rt["running"]:
+            _rt["mouth_wants_stop"] = True
+        elif _rt["sock"] is not None:
+            _invoke_start_operator()
+    elif ratio < 0.3 and latch:
+        _rt["mouth_latch"] = False
+    return 0.05
 
 
 
@@ -409,19 +440,13 @@ class MARIONETTE_OT_start(Operator):
         scene  = context.scene
 
         with _rt["lock"]:
-            latest      = dict(_rt["latest"])
-            mouth_ratio = _rt["mouth_ratio"]
-            mouth_latch = _rt["mouth_latch"]
+            latest = dict(_rt["latest"])
 
-        # ── Mouth toggle (stop only — latch prevents repeat triggers) ────────
-        if props.mouth_toggle:
-            if mouth_ratio > 0.6 and not mouth_latch:
-                _rt["mouth_latch"] = True
-                context.window_manager.event_timer_remove(self._timer)
-                _stop()
-                return {"CANCELLED"}
-            elif mouth_ratio < 0.3 and mouth_latch:
-                _rt["mouth_latch"] = False
+        if _rt["mouth_wants_stop"]:
+            _rt["mouth_wants_stop"] = False
+            context.window_manager.event_timer_remove(self._timer)
+            _stop()
+            return {"CANCELLED"}
 
         if iface:
             for name, xyz in latest.items():
@@ -439,37 +464,42 @@ class MARIONETTE_OT_start(Operator):
             return {"CANCELLED"}
 
         props = context.scene.marionette
-        sock  = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        sock.settimeout(0.5)
 
-        # OSC port: try requested port, auto-increment up to 10 times if busy
-        found = None
-        for candidate in range(props.osc_port, props.osc_port + 10):
-            try:
-                sock.bind(("0.0.0.0", candidate))
-                found = candidate
-                break
-            except OSError:
-                continue
+        if _rt["sock"] is None:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            sock.settimeout(0.5)
 
-        if found is None:
-            self.report({"ERROR"},
-                f"OSC ports {props.osc_port}–{props.osc_port+9} all busy. "
-                f"Change OSC Port manually and update the relay to match.")
-            sock.close()
-            return {"CANCELLED"}
+            # OSC port: try requested port, auto-increment up to 10 times if busy
+            found = None
+            for candidate in range(props.osc_port, props.osc_port + 10):
+                try:
+                    sock.bind(("0.0.0.0", candidate))
+                    found = candidate
+                    break
+                except OSError:
+                    continue
 
-        if found != props.osc_port:
-            self.report({"WARNING"},
-                f"OSC port {props.osc_port} was busy — now using {found}. "
-                f"Update the relay's OSC port to {found}.")
-            props.osc_port = found
+            if found is None:
+                self.report({"ERROR"},
+                    f"OSC ports {props.osc_port}–{props.osc_port+9} all busy. "
+                    f"Change OSC Port manually and update the relay to match.")
+                sock.close()
+                return {"CANCELLED"}
 
-        _rt.update(running=True, sock=sock, latest={}, smooth={}, count=0, last="")
-        t = threading.Thread(target=_listen, args=(sock,), daemon=True)
-        t.start()
-        _rt["thread"] = t
+            if found != props.osc_port:
+                self.report({"WARNING"},
+                    f"OSC port {props.osc_port} was busy — now using {found}. "
+                    f"Update the relay's OSC port to {found}.")
+                props.osc_port = found
+
+            _rt["sock"] = sock
+            _rt["osc_port"] = found
+            t = threading.Thread(target=_listen, args=(sock,), daemon=True)
+            t.start()
+            _rt["thread"] = t
+
+        _rt.update(running=True, latest={}, smooth={}, count=0, last="")
 
         handle = bpy.types.SpaceView3D.draw_handler_add(
             _overlay_draw, (), 'WINDOW', 'POST_PIXEL')
@@ -479,7 +509,7 @@ class MARIONETTE_OT_start(Operator):
         self._timer = wm.event_timer_add(0.016, window=context.window)
         wm.modal_handler_add(self)
 
-        self.report({"INFO"}, f"Listening — OSC port {found}")
+        self.report({"INFO"}, f"Listening — OSC port {_rt.get('osc_port', props.osc_port)}")
         return {"RUNNING_MODAL"}
 
     def cancel(self, context):
@@ -578,10 +608,14 @@ def register():
     for cls in CLASSES:
         bpy.utils.register_class(cls)
     bpy.types.Scene.marionette = PointerProperty(type=MarionetteProperties)
+    if not bpy.app.timers.is_registered(_mouth_watcher):
+        bpy.app.timers.register(_mouth_watcher, persistent=True)
 
 
 def unregister():
-    _stop()
+    if bpy.app.timers.is_registered(_mouth_watcher):
+        bpy.app.timers.unregister(_mouth_watcher)
+    _full_stop()
     for cls in reversed(CLASSES):
         bpy.utils.unregister_class(cls)
     del bpy.types.Scene.marionette
