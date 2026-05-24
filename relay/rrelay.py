@@ -64,9 +64,13 @@ async def handler(ws):
 
             ts = time.time()
             frame_count += 1
-            for name, xyz in packet.items():
-                osc.send_message(f"/empty/{name}", [float(v) for v in xyz])
-                writer.writerow([f"{ts:.4f}", name, f"{xyz[0]:.6f}", f"{xyz[1]:.6f}", f"{xyz[2]:.6f}"])
+            for name, val in packet.items():
+                if name.startswith("__"):
+                    osc.send_message(f"/control/{name[2:]}", float(val))
+                else:
+                    xyz = val
+                    osc.send_message(f"/empty/{name}", [float(v) for v in xyz])
+                    writer.writerow([f"{ts:.4f}", name, f"{xyz[0]:.6f}", f"{xyz[1]:.6f}", f"{xyz[2]:.6f}"])
             fh.flush()
 
             if frame_count % 60 == 1:

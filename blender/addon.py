@@ -87,6 +87,8 @@ _rt = {
     "last":             "",
     "last_ts":          0.0,
     "overlay_handle":   None,
+    "mouth_ratio":      0.0,
+    "mouth_latch":      False,
 }
 
 
@@ -105,6 +107,9 @@ def _listen(sock):
                     _rt["count"]       += 1
                     _rt["last"]         = f"{addr}  [{args[0]:.3f}  {args[1]:.3f}  {args[2]:.3f}]"
                     _rt["last_ts"]      = time.time()
+            elif addr == "/control/mouth" and len(args) >= 1:
+                with _rt["lock"]:
+                    _rt["mouth_ratio"] = float(args[0])
         except OSError:
             pass
 
@@ -378,6 +383,11 @@ class MarionetteProperties(PropertyGroup):
 
     debug_expanded: BoolProperty(name="Debug", default=False)
 
+    mouth_toggle: BoolProperty(
+        name="mouth open to stop",
+        default=True,
+        description="Open mouth wide to stop tracking. Close mouth to re-arm.")
+
 
 # ── Operators ─────────────────────────────────────────────────────────────────
 
@@ -399,7 +409,19 @@ class MARIONETTE_OT_start(Operator):
         scene  = context.scene
 
         with _rt["lock"]:
-            latest = dict(_rt["latest"])
+            latest      = dict(_rt["latest"])
+            mouth_ratio = _rt["mouth_ratio"]
+            mouth_latch = _rt["mouth_latch"]
+
+        # ── Mouth toggle (stop only — latch prevents repeat triggers) ────────
+        if props.mouth_toggle:
+            if mouth_ratio > 0.6 and not mouth_latch:
+                _rt["mouth_latch"] = True
+                context.window_manager.event_timer_remove(self._timer)
+                _stop()
+                return {"CANCELLED"}
+            elif mouth_ratio < 0.3 and mouth_latch:
+                _rt["mouth_latch"] = False
 
         if iface:
             for name, xyz in latest.items():
@@ -498,6 +520,8 @@ class MARIONETTE_PT_main(Panel):
             row.operator("marionette.stop", text="Stop", icon="CANCEL")
         else:
             row.operator("marionette.start", text="Start", icon="PLAY")
+
+        layout.prop(props, "mouth_toggle")
 
         # ── Connection (inline, no box) ───────────────────────────────────────
         ports_row = layout.row(align=True)
