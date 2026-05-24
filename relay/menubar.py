@@ -116,7 +116,7 @@ class RRelayApp(rumps.App):
             rumps.notification("Strings", "Relay stopped", f"Exit code {rc}. Open Logs for details.")
 
     def _update_status(self, running):
-        self.title = "🟢" if running else ""
+        self.title = "🟢 rrelay" if running else "rrelay"
         self.status_item.title = "running" if running else "stopped"
         self.toggle_item.title = "Stop" if running else "Start"
 
