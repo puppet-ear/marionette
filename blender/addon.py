@@ -88,6 +88,7 @@ _rt = {
     "smooth":           {},           # {name: (bx, by, bz)}
     "count":            0,
     "last":             "",
+    "last_ts":          0.0,
     "relay_proc":       None,         # subprocess if we launched it
     "relay_owned":      False,        # True only if we started it
     "overlay_handle":   None,
@@ -110,6 +111,7 @@ def _listen(sock):
                     _rt["latest"][name] = tuple(args[:3])
                     _rt["count"]       += 1
                     _rt["last"]         = f"{addr}  [{args[0]:.3f}  {args[1]:.3f}  {args[2]:.3f}]"
+                    _rt["last_ts"]      = time.time()
         except OSError:
             pass
 
@@ -301,10 +303,6 @@ class FingersProperties(PropertyGroup):
 def _draw_fingers(layout, props):
     fp = props.fingers
 
-    with _rt["lock"]:
-        latest = dict(_rt["latest"])
-
-    # ── Mapping ───────────────────────────────────────────────────────────────
     box = layout.box()
     box.label(text="Finger Mapping", icon="HAND")
 
@@ -325,18 +323,10 @@ def _draw_fingers(layout, props):
         rc = row.column(align=True)
         rc.prop(fp, f"right_{finger}", icon="OBJECT_DATA", text=lbl)
 
-    # ── Live values (only when tracking data is present) ─────────────────────
-    if latest:
-        layout.separator(factor=0.5)
-        live = layout.box()
-        live.label(text="Live", icon="VIEWZOOM")
-        col = live.column(align=True)
-        for hand in _HANDS:
-            for finger in _FINGERS:
-                xyz = latest.get(f"{hand}_{finger}")
-                if xyz:
-                    col.label(text=f"{hand[0]}_{finger[:3]}  "
-                                   f"{xyz[0]:.3f}  {xyz[1]:.3f}  {xyz[2]:.3f}")
+    box.separator(factor=0.5)
+    col = box.column(align=True)
+    col.prop(props, "scale",     slider=True)
+    col.prop(props, "smoothing", slider=True)
 
 
 def _handle_fingers(name, xyz, props, scene, scale, alpha):
@@ -424,6 +414,8 @@ class MarionetteProperties(PropertyGroup):
         description="0 = instant, 0.99 = very sluggish")
 
     fingers: PointerProperty(type=FingersProperties)
+
+    debug_expanded: BoolProperty(name="Debug", default=False)
 
 
 # ── Operators ─────────────────────────────────────────────────────────────────
@@ -589,7 +581,7 @@ class MARIONETTE_PT_main(Panel):
         props  = context.scene.marionette
         active = _rt["running"]
 
-        # Start / Stop
+        # ── Start / Stop ──────────────────────────────────────────────────────
         row = layout.row()
         row.scale_y = 1.8
         if active:
@@ -598,59 +590,59 @@ class MARIONETTE_PT_main(Panel):
         else:
             row.operator("marionette.start", text="Start", icon="PLAY")
 
+        # ── Connection (inline, no box) ───────────────────────────────────────
+        ports_row = layout.row(align=True)
+        ports_row.prop(props, "ws_port")
+        ports_row.prop(props, "osc_port")
+        status = _relay_status(props.ws_port)
+        owned  = _rt["relay_owned"] and _rt["relay_proc"] and _rt["relay_proc"].poll() is None
+        relay_row = layout.row(align=True)
+        if owned:
+            relay_row.alert = True
+            relay_row.operator("marionette.stop_relay",   text="Stop Relay",   icon="CANCEL")
+        else:
+            relay_row.operator("marionette.launch_relay", text="Launch Relay", icon="PLAY")
+        layout.label(text=f"relay: {status}")
+
         layout.separator()
 
-        # Interface selector
+        # ── Interface selector + content ──────────────────────────────────────
         layout.prop(props, "interface", text="Interface")
-
         layout.separator()
-
-        # Interface-specific section — finger mapping etc.
         iface = _INTERFACES.get(props.interface)
         if iface:
             iface["draw"](layout, props)
 
         layout.separator()
 
-        # ── Connection ────────────────────────────────────────────────────────
-        cbox = layout.box()
-        cbox.label(text="Connection", icon="NETWORK_DRIVE")
-        ports_row = cbox.row(align=True)
-        ports_row.prop(props, "ws_port")
-        ports_row.prop(props, "osc_port")
-        cbox.separator(factor=0.5)
-        status = _relay_status(props.ws_port)
-        relay_row = cbox.row(align=True)
-        owned = _rt["relay_owned"] and _rt["relay_proc"] and _rt["relay_proc"].poll() is None
-        if owned:
-            relay_row.alert = True
-            relay_row.operator("marionette.stop_relay",   text="Stop Relay",   icon="CANCEL")
-        else:
-            relay_row.operator("marionette.launch_relay", text="Launch Relay", icon="PLAY")
-        cbox.label(text=f"relay: {status}")
-
-        layout.separator()
-
-        # ── Settings ──────────────────────────────────────────────────────────
-        sbox = layout.box()
-        sbox.label(text="Settings", icon="PREFERENCES")
-        col = sbox.column(align=True)
-        col.prop(props, "scale",     slider=True)
-        col.prop(props, "smoothing", slider=True)
-
-        layout.separator()
-
-        # ── Debug ─────────────────────────────────────────────────────────────
-        dbox = layout.box()
-        dbox.label(text="Debug", icon="CONSOLE")
+        # ── Debug (collapsible) ───────────────────────────────────────────────
         with _rt["lock"]:
-            count = _rt["count"]
-            last  = _rt["last"]
-        if count:
-            dbox.label(text=f"packets: {count}")
-            dbox.label(text=last[:60])
-        else:
-            dbox.label(text="no packets yet", icon="ERROR")
+            count    = _rt["count"]
+            last_ts  = _rt["last_ts"]
+            latest   = dict(_rt["latest"])
+
+        dbox    = layout.box()
+        hdr     = dbox.row()
+        hdr.prop(props, "debug_expanded",
+                 icon="TRIA_DOWN" if props.debug_expanded else "TRIA_RIGHT",
+                 icon_only=True, emboss=False)
+        hdr.label(text="Debug", icon="CONSOLE")
+        if last_ts:
+            hdr.label(text=time.strftime("%H:%M:%S", time.localtime(last_ts)))
+
+        if props.debug_expanded:
+            col = dbox.column(align=True)
+            col.label(text=f"packets received: {count}")
+            col.separator(factor=0.3)
+            if latest:
+                for hand in ("left", "right"):
+                    for finger in _FINGER_ORDER:
+                        xyz = latest.get(f"{hand}_{finger}")
+                        if xyz:
+                            col.label(text=f"{hand[0]}_{finger[:3]}  "
+                                          f"{xyz[0]:.3f}  {xyz[1]:.3f}  {xyz[2]:.3f}")
+            else:
+                col.label(text="no data yet", icon="ERROR")
 
 
 # ── Registration ──────────────────────────────────────────────────────────────
