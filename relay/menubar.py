@@ -18,7 +18,7 @@ import time
 
 import rumps
 
-HERE = pathlib.Path(__file__).parent
+HERE     = pathlib.Path(__file__).parent
 RELAY_PY = HERE / "rrelay.py"
 
 LOG_DIR = pathlib.Path.home() / "Library" / "Logs" / "Strings"
@@ -116,7 +116,7 @@ class RRelayApp(rumps.App):
             rumps.notification("Strings", "Relay stopped", f"Exit code {rc}. Open Logs for details.")
 
     def _update_status(self, running):
-        self.title = "🟢 rrelay" if running else "rrelay"
+        self.title = "🟢" if running else ""
         self.status_item.title = "running" if running else "stopped"
         self.toggle_item.title = "Stop" if running else "Start"
 
