@@ -6,4 +6,5 @@ __pycache__/
 gemini_convo.md
 spirit.md
 data/
+web/data/
 .playwright-mcp/
