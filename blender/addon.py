@@ -114,6 +114,8 @@ def _listen(sock):
                     _rt["last_ts"]      = time.time()
         except OSError:
             break  # socket closed — exit
+        except Exception:
+            pass   # parse error or transient fault — keep running
 
 
 # ── Viewport overlay ──────────────────────────────────────────────────────────
@@ -465,7 +467,17 @@ class MARIONETTE_OT_start(Operator):
 
         props = context.scene.marionette
 
-        if _rt["sock"] is None:
+        thread_dead = _rt["thread"] is None or not _rt["thread"].is_alive()
+
+        if _rt["sock"] is None or thread_dead:
+            # Close any leftover socket before rebinding
+            if _rt["sock"] is not None:
+                try:
+                    _rt["sock"].close()
+                except OSError:
+                    pass
+                _rt["sock"] = None
+
             sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             sock.settimeout(0.5)
