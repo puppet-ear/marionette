@@ -415,9 +415,9 @@ class MarionetteProperties(PropertyGroup):
     debug_expanded: BoolProperty(name="Debug", default=False)
 
     mouth_toggle: BoolProperty(
-        name="mouth open to stop",
+        name="mouth open to toggle",
         default=True,
-        description="Open mouth wide to stop tracking. Close mouth to re-arm.")
+        description="Open mouth wide to toggle start/stop. Close mouth to re-arm.")
 
 
 # ── Operators ─────────────────────────────────────────────────────────────────
@@ -579,8 +579,11 @@ class MARIONETTE_PT_main(Panel):
 
         if props.debug_expanded:
             with _rt["lock"]:
-                latest = dict(_rt["latest"])
+                latest     = dict(_rt["latest"])
+                mouth_ratio = _rt["mouth_ratio"]
             col = dbox.column(align=True)
+            col.label(text=f"mouth  {mouth_ratio:.3f}")
+            col.separator(factor=0.4)
             if latest:
                 for hand in ("left", "right"):
                     for finger in _FINGER_ORDER:
@@ -589,7 +592,7 @@ class MARIONETTE_PT_main(Panel):
                             col.label(text=f"{hand[0]}_{finger[:3]}  "
                                           f"{xyz[0]:.3f}  {xyz[1]:.3f}  {xyz[2]:.3f}")
             else:
-                col.label(text="no data", icon="ERROR")
+                col.label(text="no finger data", icon="ERROR")
 
 
 # ── Registration ──────────────────────────────────────────────────────────────

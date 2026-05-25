@@ -345,6 +345,16 @@ input[type="range"] {
     </div>
 
     <div class="section">
+      <div class="section-head">Face</div>
+      <div id="face-data">
+        <div class="finger-row" style="grid-template-columns: 56px 1fr;">
+          <span class="fname" id="mouth-label">mouth</span>
+          <span class="fval" id="mouth-val" style="text-align:right">—</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="section">
       <div class="section-head">Settings</div>
       <div id="settings-body">
 
@@ -727,7 +737,17 @@ function loop(ts) {
   if (faceLandmarker) {
     const faceResults = faceLandmarker.detectForVideo(video, ts);
     if (faceResults.faceLandmarks && faceResults.faceLandmarks.length > 0) {
-      relayPacket["__mouth"] = mouthAspectRatio(faceResults.faceLandmarks[0]);
+      const mar = mouthAspectRatio(faceResults.faceLandmarks[0]);
+      relayPacket["__mouth"] = mar;
+      const mouthVal   = document.getElementById("mouth-val");
+      const mouthLabel = document.getElementById("mouth-label");
+      mouthVal.textContent  = mar.toFixed(3);
+      mouthVal.className    = "fval on";
+      mouthLabel.className  = "fname on";
+    } else {
+      document.getElementById("mouth-val").textContent = "—";
+      document.getElementById("mouth-val").className   = "fval";
+      document.getElementById("mouth-label").className = "fname";
     }
   }
 
