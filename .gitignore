@@ -4,5 +4,6 @@ __pycache__/
 *.mp4
 .DS_Store
 gemini_convo.md
+spirit.md
 data/
 .playwright-mcp/
