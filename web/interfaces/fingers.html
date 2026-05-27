@@ -147,8 +147,23 @@ canvas#output {
   background: #f8f8f8;
   display: none;
   z-index: 10;
-  resize: horizontal;
   overflow: hidden;
+}
+
+#pip-drag {
+  position: absolute;
+  top: 0; left: 0;
+  width: 20px; height: 20px;
+  cursor: nw-resize;
+  z-index: 20;
+}
+#pip-drag::before {
+  content: "";
+  position: absolute;
+  top: 4px; left: 4px;
+  width: 7px; height: 7px;
+  border-top: 1.5px solid var(--mid);
+  border-left: 1.5px solid var(--mid);
 }
 
 #pip-video-wrap {
@@ -171,12 +186,54 @@ canvas#output {
 }
 
 #pip-label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   padding: 3px 8px 4px;
   font-size: 9px;
   color: var(--mid);
   letter-spacing: 0.1em;
   text-transform: uppercase;
   border-top: 1px solid var(--line);
+}
+
+#pip-rec-btn {
+  font-family: var(--font);
+  font-size: 9px;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--mid);
+  cursor: pointer;
+  padding: 1px 6px;
+  letter-spacing: 0.06em;
+  line-height: 1.4;
+}
+#pip-rec-btn.recording {
+  border-color: #ff3b30;
+  color: #ff3b30;
+}
+
+#canvas-rec-btn {
+  position: absolute;
+  bottom: 12px;
+  left: 12px;
+  font-family: var(--font);
+  font-size: 9px;
+  border: 1px solid var(--black);
+  background: transparent;
+  color: var(--black);
+  cursor: pointer;
+  padding: 3px 10px;
+  letter-spacing: 0.06em;
+  z-index: 10;
+  opacity: 0.5;
+  transition: opacity 0.2s;
+}
+#canvas-rec-btn:hover { opacity: 1; }
+#canvas-rec-btn.recording {
+  border-color: #ff3b30;
+  color: #ff3b30;
+  opacity: 1;
 }
 
 /* ── Data aside ──────────────────────────────────────────────────────────── */
@@ -340,14 +397,19 @@ input[type="range"] {
   <div id="canvas-col">
     <canvas id="output"></canvas>
     <button id="start-btn">start camera</button>
+    <button id="canvas-rec-btn">● rec</button>
 
     <!-- Camera PiP -->
     <div id="pip">
+      <div id="pip-drag"></div>
       <div id="pip-video-wrap">
         <video id="video" autoplay playsinline muted></video>
         <canvas id="pip-canvas"></canvas>
       </div>
-      <div id="pip-label">camera</div>
+      <div id="pip-label">
+        <span>camera</span>
+        <button id="pip-rec-btn">● rec</button>
+      </div>
     </div>
   </div>
 
@@ -880,6 +942,121 @@ document.getElementById("start-btn").addEventListener("click", async function ()
 document.getElementById("relay-port").addEventListener("change", () => {
   if (ws) ws.onclose = null, ws.close();
   connectWS();
+});
+
+// ── PiP drag-to-resize (top-left handle, anchored bottom-right) ───────────────
+
+document.getElementById("pip-drag").addEventListener("mousedown", e => {
+  e.preventDefault();
+  const pip    = document.getElementById("pip");
+  const startX = e.clientX;
+  const startW = pip.offsetWidth;
+
+  const onMove = e => {
+    const w = Math.max(100, Math.min(560, startW + (startX - e.clientX)));
+    pip.style.width = w + "px";
+  };
+  const onUp = () => {
+    document.removeEventListener("mousemove", onMove);
+    document.removeEventListener("mouseup",   onUp);
+  };
+  document.addEventListener("mousemove", onMove);
+  document.addEventListener("mouseup",   onUp);
+});
+
+// ── Recording helpers ─────────────────────────────────────────────────────────
+
+function startRecorder(stream, filename) {
+  const chunks = [];
+  const mr     = new MediaRecorder(stream, { mimeType: getSupportedMime() });
+  mr.ondataavailable = e => e.data.size && chunks.push(e.data);
+  mr.onstop = () => {
+    const blob = new Blob(chunks, { type: mr.mimeType });
+    const a    = Object.assign(document.createElement("a"), {
+      href: URL.createObjectURL(blob), download: filename,
+    });
+    a.click();
+    URL.revokeObjectURL(a.href);
+  };
+  mr.start();
+  return mr;
+}
+
+function getSupportedMime() {
+  const types = ["video/mp4;codecs=avc1", "video/webm;codecs=vp9", "video/webm"];
+  return types.find(t => MediaRecorder.isTypeSupported(t)) || "";
+}
+
+function ext() {
+  const mime = getSupportedMime();
+  return mime.startsWith("video/mp4") ? "mp4" : "webm";
+}
+
+function timestamp() {
+  return new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+}
+
+// ── Main canvas recorder ──────────────────────────────────────────────────────
+
+let canvasRecorder = null;
+
+document.getElementById("canvas-rec-btn").addEventListener("click", function () {
+  if (canvasRecorder) {
+    canvasRecorder.stop();
+    canvasRecorder = null;
+    this.textContent = "● rec";
+    this.classList.remove("recording");
+  } else {
+    const stream = document.getElementById("output").captureStream(30);
+    canvasRecorder = startRecorder(stream, `hands-${timestamp()}.${ext()}`);
+    this.textContent = "■ stop";
+    this.classList.add("recording");
+  }
+});
+
+// ── PiP composited recorder ───────────────────────────────────────────────────
+// Draws video + pip-canvas overlay onto an offscreen canvas each frame,
+// so the recording includes the coloured fingertip dots.
+
+let pipRecorder   = null;
+let pipOffscreen  = null;
+let pipRecLoop    = false;
+
+document.getElementById("pip-rec-btn").addEventListener("click", function () {
+  if (pipRecorder) {
+    pipRecLoop = false;
+    pipRecorder.stop();
+    pipRecorder = null;
+    this.textContent = "● rec";
+    this.classList.remove("recording");
+    return;
+  }
+
+  const video     = document.getElementById("video");
+  const overlay   = document.getElementById("pip-canvas");
+  pipOffscreen    = document.createElement("canvas");
+  pipOffscreen.width  = video.videoWidth  || 640;
+  pipOffscreen.height = video.videoHeight || 480;
+
+  const ctx    = pipOffscreen.getContext("2d");
+  const stream = pipOffscreen.captureStream(30);
+  pipRecorder  = startRecorder(stream, `camera-${timestamp()}.${ext()}`);
+  pipRecLoop   = true;
+  this.textContent = "■ stop";
+  this.classList.add("recording");
+
+  (function composite() {
+    if (!pipRecLoop) return;
+    ctx.save();
+    // Mirror to match the CSS-flipped video
+    ctx.translate(pipOffscreen.width, 0);
+    ctx.scale(-1, 1);
+    ctx.drawImage(video, 0, 0, pipOffscreen.width, pipOffscreen.height);
+    ctx.restore();
+    // Overlay is already drawn in mirrored space, draw it as-is
+    ctx.drawImage(overlay, 0, 0, pipOffscreen.width, pipOffscreen.height);
+    requestAnimationFrame(composite);
+  })();
 });
 
 connectWS();
