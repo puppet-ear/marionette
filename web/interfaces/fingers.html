@@ -140,17 +140,34 @@ canvas#output {
   position: absolute;
   bottom: 16px;
   right: 16px;
-  width: 176px;
+  width: 220px;
+  min-width: 100px;
+  max-width: 560px;
   border: 1px solid var(--line);
   background: #f8f8f8;
   display: none;
   z-index: 10;
+  resize: horizontal;
+  overflow: hidden;
+}
+
+#pip-video-wrap {
+  position: relative;
+  display: block;
 }
 
 #pip video {
   width: 100%;
+  height: auto;
   display: block;
   transform: scaleX(-1);
+}
+
+#pip-canvas {
+  position: absolute;
+  top: 0; left: 0;
+  width: 100%; height: 100%;
+  pointer-events: none;
 }
 
 #pip-label {
@@ -326,7 +343,10 @@ input[type="range"] {
 
     <!-- Camera PiP -->
     <div id="pip">
-      <video id="video" autoplay playsinline muted></video>
+      <div id="pip-video-wrap">
+        <video id="video" autoplay playsinline muted></video>
+        <canvas id="pip-canvas"></canvas>
+      </div>
       <div id="pip-label">camera</div>
     </div>
   </div>
@@ -411,6 +431,15 @@ const BONES = [
   [13, 14],[14, 15],[15, 16],    // ring
   [17, 18],[18, 19],[19, 20],    // pinky
 ];
+
+// Teenage Engineering palette — one colour per finger, consistent across both hands
+const FINGER_COLORS = {
+  thumb:  "#FF6B00",  // TE orange
+  index:  "#00C8FF",  // cyan
+  middle: "#4CD964",  // lime
+  ring:   "#FF2D55",  // pink
+  pinky:  "#FFCC00",  // yellow
+};
 
 function getRelayURL() {
   const port = document.getElementById("relay-port")?.value || "8765";
@@ -674,6 +703,37 @@ function renderData(side, positions, ext) {
   }).join("");
 }
 
+// ── PiP overlay ───────────────────────────────────────────────────────────────
+
+function drawPip(allFilteredLms) {
+  const pc  = document.getElementById("pip-canvas");
+  const ctx = pc.getContext("2d");
+  const W = pc.width, H = pc.height;
+  if (!W || !H) return;
+  ctx.clearRect(0, 0, W, H);
+
+  for (const lms of allFilteredLms) {
+    // Bones — thin, dark, low opacity to match minimalist scheme
+    ctx.strokeStyle = "rgba(13,13,13,0.3)";
+    ctx.lineWidth   = 1;
+    for (const [a, b] of BONES) {
+      ctx.beginPath();
+      ctx.moveTo((1 - lms[a].x) * W, lms[a].y * H);
+      ctx.lineTo((1 - lms[b].x) * W, lms[b].y * H);
+      ctx.stroke();
+    }
+
+    // Fingertips — TE accent colours
+    for (const [name, idx] of Object.entries(FINGER_TIPS)) {
+      const lm = lms[idx];
+      ctx.beginPath();
+      ctx.arc((1 - lm.x) * W, lm.y * H, 4.5, 0, Math.PI * 2);
+      ctx.fillStyle = FINGER_COLORS[name];
+      ctx.fill();
+    }
+  }
+}
+
 // ── Main loop ─────────────────────────────────────────────────────────────────
 
 function loop(ts) {
@@ -695,11 +755,12 @@ function loop(ts) {
 
   ctx.clearRect(0, 0, W, H);
 
-  const relayPacket = {};
-  const logFrame    = { ts };
-  const handPos = { Left: null, Right: null };
-  const handExt = { Left: new Set(), Right: new Set() };
-  let handsDetected = false;
+  const relayPacket    = {};
+  const logFrame       = { ts };
+  const handPos        = { Left: null, Right: null };
+  const handExt        = { Left: new Set(), Right: new Set() };
+  const pipLandmarks   = [];
+  let handsDetected    = false;
 
   if (results.landmarks) {
     for (let i = 0; i < results.landmarks.length; i++) {
@@ -720,6 +781,7 @@ function loop(ts) {
         presence:   lm.presence,
       }));
 
+      pipLandmarks.push(filteredLms);
       drawHand(ctx, filteredLms, ext, W, H);
 
       for (const [name, idx] of Object.entries(FINGER_TIPS)) {
@@ -733,6 +795,8 @@ function loop(ts) {
       }
     }
   }
+
+  drawPip(pipLandmarks);
 
   if (faceLandmarker) {
     const faceResults = faceLandmarker.detectForVideo(video, ts);
@@ -767,6 +831,14 @@ function resizeCanvas() {
 }
 
 new ResizeObserver(resizeCanvas).observe(document.getElementById("canvas-col"));
+
+// Keep pip-canvas pixel dimensions in sync with the video's rendered size
+const pipCanvas = document.getElementById("pip-canvas");
+new ResizeObserver(() => {
+  const video = document.getElementById("video");
+  pipCanvas.width  = video.clientWidth;
+  pipCanvas.height = video.clientHeight;
+}).observe(document.getElementById("video"));
 
 // ── Controls ──────────────────────────────────────────────────────────────────
 
