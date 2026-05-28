@@ -214,19 +214,21 @@ canvas#output {
 }
 
 #camera-select {
-  display: none;
-  width: 100%;
+  flex: 1;
   font-family: var(--font);
   font-size: 9px;
   color: var(--mid);
   background: transparent;
   border: none;
-  border-top: 1px solid var(--line);
-  padding: 4px 8px;
+  padding: 0;
   outline: none;
   cursor: pointer;
   -webkit-appearance: none;
   appearance: none;
+  text-overflow: ellipsis;
+  overflow: hidden;
+  letter-spacing: 0.05em;
+  min-width: 0;
 }
 
 #canvas-rec-btn {
@@ -423,10 +425,9 @@ input[type="range"] {
         <canvas id="pip-canvas"></canvas>
       </div>
       <div id="pip-label">
-        <span>camera</span>
+        <select id="camera-select"></select>
         <button id="pip-rec-btn">● rec</button>
       </div>
-      <select id="camera-select"></select>
     </div>
   </div>
 
@@ -677,7 +678,6 @@ async function populateCameraSelect(activeDeviceId) {
   sel.innerHTML = cameras.map((d, i) =>
     `<option value="${d.deviceId}"${d.deviceId === activeDeviceId ? " selected" : ""}>${d.label || `Camera ${i + 1}`}</option>`
   ).join("");
-  sel.style.display = cameras.length > 1 ? "block" : "none";
 }
 
 async function startCamera() {
@@ -1089,18 +1089,22 @@ document.getElementById("pip-rec-btn").addEventListener("click", function () {
   this.classList.add("recording");
 
   const W = pipOffscreen.width, H = pipOffscreen.height;
-  (function composite() {
+  // requestVideoFrameCallback fires exactly when a new camera frame arrives,
+  // keeping the recording in sync with the source frame rate (not display rAF).
+  const useRVFC = "requestVideoFrameCallback" in video;
+  function composite() {
     if (!pipRecLoop) return;
-    // Draw mirrored video at full native resolution
     ctx.save();
     ctx.translate(W, 0);
     ctx.scale(-1, 1);
     ctx.drawImage(video, 0, 0, W, H);
     ctx.restore();
-    // Redraw landmarks at native resolution — no upscaling artefacts
     drawPipOnCtx(ctx, latestPipLandmarks, W, H);
-    requestAnimationFrame(composite);
-  })();
+    if (useRVFC) video.requestVideoFrameCallback(composite);
+    else requestAnimationFrame(composite);
+  }
+  if (useRVFC) video.requestVideoFrameCallback(composite);
+  else requestAnimationFrame(composite);
 });
 
 connectWS();
