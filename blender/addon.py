@@ -1,5 +1,5 @@
 """
-Marionette — Blender addon (multi-interface)
+marionettes — Blender addon (multi-interface)
 
 Receives /empty/<name> x y z over OSC and drives scene objects in real time.
 
@@ -10,17 +10,17 @@ Receives /empty/<name> x y z over OSC and drives scene objects in real time.
    That's it.
 
 Install: Edit > Preferences > Add-ons > Install > select this file > Enable
-Panel:   3D Viewport > N panel > Marionette tab
-Stack:   fingers.html → relay.py → OSC UDP:7700 → here
+Panel:   3D Viewport > N panel > marionettes tab
+Stack:   fingers.html → rrelay → OSC UDP:7700 → here
 """
 
 bl_info = {
-    "name":        "Marionette",
-    "author":      "Marionette Project",
+    "name":        "marionettes",
+    "author":      "marionettes",
     "version":     (2, 0, 0),
     "blender":     (3, 6, 0),
-    "location":    "View3D > Sidebar > Marionette",
-    "description": "Real-time hand / input puppeteering via OSC",
+    "location":    "View3D > Sidebar > marionettes",
+    "description": "instruments for Blender",
     "category":    "Animation",
 }
 
@@ -619,9 +619,9 @@ class MARIONETTE_PT_main(Panel):
         if props.setup_expanded:
             col = sbox.column(align=True)
             col.label(text="1.  Launch rrelay menu bar app")
-            col.label(text="2.  marionettes.netlify.app")
-            col.label(text="       → click  start camera")
-            col.label(text="3.  Press Start below  ↓")
+            col.label(text="2.  Open marionettes.netlify.app")
+            col.label(text="3.  Click  start camera")
+            col.label(text="4.  Press Start in this panel")
 
 
 # ── Registration ──────────────────────────────────────────────────────────────

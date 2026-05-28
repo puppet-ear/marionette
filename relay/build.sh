@@ -1,5 +1,5 @@
 #!/bin/bash
-# Build rrelay.app as a distributable macOS app.
+# Build rrelay.app + rrelay.dmg for distribution.
 #
 # Requirements: Homebrew Python 3.12
 # Usage: cd relay && ./build.sh
@@ -24,6 +24,7 @@ python -m PyInstaller \
   --windowed \
   --onedir \
   --name rrelay \
+  --icon rrelay.icns \
   --hidden-import rumps \
   --hidden-import websockets \
   --hidden-import pythonosc \
@@ -33,7 +34,16 @@ python -m PyInstaller \
 echo "→ Ad-hoc signing..."
 codesign --force --deep --sign - "dist/rrelay.app"
 
+echo "→ Building rrelay.dmg..."
+rm -f dist/rrelay.dmg
+hdiutil create \
+  -volname rrelay \
+  -srcfolder dist/rrelay.app \
+  -ov -format UDZO \
+  dist/rrelay.dmg
+
 deactivate
 
 echo ""
 echo "✓  dist/rrelay.app  ready — drag to /Applications to install"
+echo "✓  dist/rrelay.dmg  ready — distributable disk image"

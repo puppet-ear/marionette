@@ -45,6 +45,17 @@ html, body {
   z-index: 200;
 }
 
+#header-logo {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  height: 38px;
+  width: auto;
+  display: block;
+  pointer-events: auto;
+}
+
 #header-title {
   padding: 0 16px;
   font-family: "Tiro Tamil", serif;
@@ -81,6 +92,18 @@ html, body {
   font-size: 10px;
   color: var(--mid);
 }
+
+#install-link {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  text-decoration: none;
+  color: var(--mid);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+#install-link:hover { color: var(--black); }
+#install-link svg { width: 14px; height: 14px; }
 
 #ws-dot {
   display: inline-block;
@@ -382,7 +405,17 @@ input[type="range"] {
 <header id="header">
   <a id="header-title" href="/">marionettes</a>
   <div id="header-sub">finger001</div>
+  <a href="/" aria-label="marionettes"><img id="header-logo" src="/logo.png" alt=""></a>
   <div id="header-right">
+    <a id="install-link" href="/install.html" title="Install instructions">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M12 3v12"/>
+        <path d="M7 10l5 5 5-5"/>
+        <path d="M5 21h14"/>
+      </svg>
+      <span>install</span>
+    </a>
     <span><span id="ws-dot"></span><span>server</span></span>
     <span id="fps-label">—</span>
   </div>

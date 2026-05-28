@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>install — marionettes</title>
+<link href="https://fonts.googleapis.com/css2?family=Tiro+Tamil:ital@1&display=swap" rel="stylesheet">
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --black: #0d0d0d;
+  --white: #ffffff;
+  --mid:   #999;
+  --line:  #e4e4e4;
+  --font:  "DejaVu Sans Mono", "JetBrains Mono", "Cascadia Code", monospace;
+  --title: "Helvetica Neue", Helvetica, Arial, sans-serif;
+}
+
+html, body {
+  height: 100%;
+  background: var(--white);
+  color: var(--black);
+  font-family: var(--font);
+  font-size: 12px;
+  -webkit-font-smoothing: antialiased;
+}
+
+header {
+  position: relative;
+  height: 40px;
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  align-items: center;
+  padding: 0 24px;
+  gap: 16px;
+}
+
+#header-logo {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  height: 38px;
+  width: auto;
+  display: block;
+}
+
+#header-title {
+  font-family: "Tiro Tamil", serif;
+  font-style: italic;
+  font-size: 15px;
+  font-weight: 400;
+  letter-spacing: 0.02em;
+  color: var(--black);
+  text-decoration: none;
+}
+
+#header-sub {
+  font-size: 10px;
+  color: var(--mid);
+}
+
+#install-link {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  text-decoration: none;
+  color: var(--black);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+#install-link svg { width: 14px; height: 14px; }
+
+main {
+  max-width: 640px;
+  margin: 64px auto 0;
+  padding: 0 24px 96px;
+}
+
+h2 {
+  font-family: var(--title);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+  color: var(--mid);
+  margin-bottom: 20px;
+}
+
+.tiles {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin-bottom: 48px;
+}
+
+.tile {
+  border: 1px solid var(--line);
+  padding: 24px 16px 18px;
+  text-align: center;
+  text-decoration: none;
+  color: var(--black);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  transition: border-color 0.15s, transform 0.15s;
+}
+
+.tile:hover {
+  border-color: var(--black);
+  transform: translateY(-2px);
+}
+
+.tile-art {
+  width: 140px;
+  height: 140px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.tile-art img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.tile-art svg {
+  width: 100%;
+  height: 100%;
+}
+
+.tile-name {
+  font-family: var(--title);
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.tile-meta {
+  font-size: 9px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--mid);
+}
+
+.tile-desc {
+  font-size: 10px;
+  color: var(--mid);
+  line-height: 1.5;
+  max-width: 200px;
+}
+
+.steps {
+  border-top: 1px solid var(--line);
+  padding-top: 20px;
+}
+
+.steps ol {
+  list-style: none;
+  counter-reset: step;
+}
+
+.steps li {
+  counter-increment: step;
+  padding: 10px 0;
+  display: flex;
+  gap: 14px;
+  font-size: 11px;
+  line-height: 1.7;
+  color: var(--black);
+}
+
+.steps li::before {
+  content: counter(step);
+  color: var(--mid);
+  min-width: 16px;
+}
+
+.steps a {
+  color: var(--black);
+}
+
+@media (max-width: 520px) {
+  .tiles { grid-template-columns: 1fr; }
+}
+</style>
+</head>
+<body>
+
+<header>
+  <a id="header-title" href="/">marionettes</a>
+  <span id="header-sub">instruments for Blender</span>
+  <a href="/" aria-label="marionettes"><img id="header-logo" src="/logo.png" alt=""></a>
+  <a id="install-link" href="/install.html" title="Install">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+         stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M12 3v12"/>
+      <path d="M7 10l5 5 5-5"/>
+      <path d="M5 21h14"/>
+    </svg>
+    <span>install</span>
+  </a>
+</header>
+
+<main>
+  <h2>Download</h2>
+
+  <div class="tiles">
+
+    <a class="tile" href="/downloads/marionettes.zip" download>
+      <div class="tile-art">
+        <img src="/logo.png" alt="">
+      </div>
+      <div class="tile-name">marionettes</div>
+      <div class="tile-meta">.zip · Blender add-on</div>
+      <div class="tile-desc">Receives input and drives the scene.</div>
+    </a>
+
+    <a class="tile" href="/downloads/rrelay.dmg" download>
+      <div class="tile-art">
+        <img src="/downloads/rrelay-icon.png" alt="">
+      </div>
+      <div class="tile-name">rrelay</div>
+      <div class="tile-meta">.dmg · macOS app</div>
+      <div class="tile-desc">Menu bar app that bridges the browser to Blender.</div>
+    </a>
+
+  </div>
+
+  <h2>Setup</h2>
+  <div class="steps">
+    <ol>
+      <li>Open the rrelay disk image, drag the rrelay app to your Applications folder, and launch it. It lives in the menu bar.</li>
+      <li>Click the menu bar icon and press Start.</li>
+      <li>In Blender, open Edit → Preferences → Add-ons → Install, pick the marionettes zip, then enable it.</li>
+      <li>Open the marionettes tab in the 3D viewport's N panel and press Start.</li>
+      <li>Back here, open an <a href="/">interface</a> and click start camera.</li>
+    </ol>
+  </div>
+</main>
+
+</body>
+</html>
