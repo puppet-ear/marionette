@@ -40,11 +40,15 @@ log = logging.getLogger("rrelay")
 _relay_loop: asyncio.AbstractEventLoop | None = None
 _relay_thread: threading.Thread | None = None
 _relay_log_fh = None
+_stop_event: asyncio.Event | None = None
 
 
 async def _relay_main(ws_port: int, osc_port: int) -> None:
+    global _stop_event
     from pythonosc.udp_client import SimpleUDPClient
     import websockets
+
+    _stop_event = asyncio.Event()
 
     async def handler(ws):
         osc = SimpleUDPClient("127.0.0.1", osc_port)
@@ -70,7 +74,8 @@ async def _relay_main(ws_port: int, osc_port: int) -> None:
 
     log.info(f"relay  ws://localhost:{ws_port}  →  osc://127.0.0.1:{osc_port}")
     async with websockets.serve(handler, "localhost", ws_port):
-        await asyncio.Future()  # run until loop is stopped
+        await _stop_event.wait()  # blocks until _stop_relay() signals shutdown
+    # async with exits cleanly here — port is released before thread ends
 
 
 def _relay_thread_fn(ws_port: int, osc_port: int) -> None:
@@ -106,12 +111,13 @@ def _start_relay(ws_port: int, osc_port: int) -> None:
 
 
 def _stop_relay() -> None:
-    global _relay_loop, _relay_thread, _relay_log_fh
-    if _relay_loop:
-        _relay_loop.call_soon_threadsafe(_relay_loop.stop)
+    global _relay_loop, _relay_thread, _relay_log_fh, _stop_event
+    if _relay_loop and _stop_event:
+        _relay_loop.call_soon_threadsafe(_stop_event.set)
     if _relay_thread:
-        _relay_thread.join(timeout=3)
+        _relay_thread.join(timeout=5)  # wait for clean port release
         _relay_thread = None
+    _stop_event = None
     # remove file handler added during start
     for h in log.handlers[:]:
         if isinstance(h, logging.FileHandler):
