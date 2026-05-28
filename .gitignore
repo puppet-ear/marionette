@@ -1,5 +1,7 @@
 __pycache__/
 *.pyc
+relay/build/
+relay/dist/
 *.mov
 *.mp4
 .DS_Store
