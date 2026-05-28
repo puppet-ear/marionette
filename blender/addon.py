@@ -414,6 +414,7 @@ class MarionetteProperties(PropertyGroup):
 
     fingers: PointerProperty(type=FingersProperties)
 
+    setup_expanded: BoolProperty(name="Setup", default=True)
     debug_expanded: BoolProperty(name="Debug", default=False)
 
     mouth_toggle: BoolProperty(
@@ -553,6 +554,22 @@ class MARIONETTE_PT_main(Panel):
         layout = self.layout
         props  = context.scene.marionette
         active = _rt["running"]
+
+        # ── Setup instructions (collapsible) ─────────────────────────────────
+        sbox = layout.box()
+        shdr = sbox.row()
+        shdr.prop(props, "setup_expanded",
+                  icon="TRIA_DOWN" if props.setup_expanded else "TRIA_RIGHT",
+                  icon_only=True, emboss=False)
+        shdr.label(text="setup", icon="INFO")
+        if props.setup_expanded:
+            col = sbox.column(align=True)
+            col.label(text="1.  Launch rrelay menu bar app")
+            col.label(text="2.  marionettes.netlify.app")
+            col.label(text="       → click  start camera")
+            col.label(text="3.  Press Start below  ↓")
+
+        layout.separator(factor=0.5)
 
         # ── Start / Stop ──────────────────────────────────────────────────────
         row = layout.row()
