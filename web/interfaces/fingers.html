@@ -213,6 +213,22 @@ canvas#output {
   color: #ff3b30;
 }
 
+#camera-select {
+  display: none;
+  width: 100%;
+  font-family: var(--font);
+  font-size: 9px;
+  color: var(--mid);
+  background: transparent;
+  border: none;
+  border-top: 1px solid var(--line);
+  padding: 4px 8px;
+  outline: none;
+  cursor: pointer;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
 #canvas-rec-btn {
   position: absolute;
   bottom: 12px;
@@ -410,6 +426,7 @@ input[type="range"] {
         <span>camera</span>
         <button id="pip-rec-btn">● rec</button>
       </div>
+      <select id="camera-select"></select>
     </div>
   </div>
 
@@ -640,16 +657,32 @@ async function initLandmarker() {
 
 // ── Camera ────────────────────────────────────────────────────────────────────
 
-async function startCamera() {
+async function openCamera(deviceId) {
   const video = document.getElementById("video");
-  const stream = await navigator.mediaDevices.getUserMedia({
-    video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: "user" },
-  });
+  if (video.srcObject) video.srcObject.getTracks().forEach(t => t.stop());
+  const constraints = { video: {
+    width: { ideal: 1920 }, height: { ideal: 1080 },
+    ...(deviceId ? { deviceId: { exact: deviceId } } : { facingMode: "user" }),
+  }};
+  const stream = await navigator.mediaDevices.getUserMedia(constraints);
   video.srcObject = stream;
   await new Promise(r => (video.onloadeddata = r));
+  await populateCameraSelect(deviceId);
+}
 
-  document.getElementById("pip").style.display  = "block";
+async function populateCameraSelect(activeDeviceId) {
+  const devices = await navigator.mediaDevices.enumerateDevices();
+  const cameras = devices.filter(d => d.kind === "videoinput");
+  const sel = document.getElementById("camera-select");
+  sel.innerHTML = cameras.map((d, i) =>
+    `<option value="${d.deviceId}"${d.deviceId === activeDeviceId ? " selected" : ""}>${d.label || `Camera ${i + 1}`}</option>`
+  ).join("");
+  sel.style.display = cameras.length > 1 ? "block" : "none";
+}
 
+async function startCamera() {
+  await openCamera(null);
+  document.getElementById("pip").style.display = "block";
   running = true;
   requestAnimationFrame(loop);
 }
@@ -767,33 +800,36 @@ function renderData(side, positions, ext) {
 
 // ── PiP overlay ───────────────────────────────────────────────────────────────
 
-function drawPip(allFilteredLms) {
-  const pc  = document.getElementById("pip-canvas");
-  const ctx = pc.getContext("2d");
-  const W = pc.width, H = pc.height;
-  if (!W || !H) return;
-  ctx.clearRect(0, 0, W, H);
+let latestPipLandmarks = [];
 
-  for (const lms of allFilteredLms) {
-    // Bones — thin, dark, low opacity to match minimalist scheme
+function drawPipOnCtx(ctx, allLms, W, H) {
+  for (const lms of allLms) {
     ctx.strokeStyle = "rgba(13,13,13,0.3)";
-    ctx.lineWidth   = 1;
+    ctx.lineWidth   = Math.max(1, W / 300);
     for (const [a, b] of BONES) {
       ctx.beginPath();
       ctx.moveTo((1 - lms[a].x) * W, lms[a].y * H);
       ctx.lineTo((1 - lms[b].x) * W, lms[b].y * H);
       ctx.stroke();
     }
-
-    // Fingertips — TE accent colours
+    const r = Math.max(3, W / 80);
     for (const [name, idx] of Object.entries(FINGER_TIPS)) {
       const lm = lms[idx];
       ctx.beginPath();
-      ctx.arc((1 - lm.x) * W, lm.y * H, 4.5, 0, Math.PI * 2);
+      ctx.arc((1 - lm.x) * W, lm.y * H, r, 0, Math.PI * 2);
       ctx.fillStyle = FINGER_COLORS[name];
       ctx.fill();
     }
   }
+}
+
+function drawPip(allFilteredLms) {
+  const pc  = document.getElementById("pip-canvas");
+  const ctx = pc.getContext("2d");
+  const W = pc.width, H = pc.height;
+  if (!W || !H) return;
+  ctx.clearRect(0, 0, W, H);
+  drawPipOnCtx(ctx, allFilteredLms, W, H);
 }
 
 // ── Main loop ─────────────────────────────────────────────────────────────────
@@ -858,6 +894,7 @@ function loop(ts) {
     }
   }
 
+  latestPipLandmarks = pipLandmarks;
   drawPip(pipLandmarks);
 
   if (faceLandmarker) {
@@ -944,6 +981,10 @@ document.getElementById("relay-port").addEventListener("change", () => {
   connectWS();
 });
 
+document.getElementById("camera-select").addEventListener("change", async e => {
+  await openCamera(e.target.value);
+});
+
 // ── PiP drag-to-resize (top-left handle, anchored bottom-right) ───────────────
 
 document.getElementById("pip-drag").addEventListener("mousedown", e => {
@@ -1015,12 +1056,11 @@ document.getElementById("canvas-rec-btn").addEventListener("click", function () 
 });
 
 // ── PiP composited recorder ───────────────────────────────────────────────────
-// Draws video + pip-canvas overlay onto an offscreen canvas each frame,
-// so the recording includes the coloured fingertip dots.
+// Composites mirrored video + landmark overlay redrawn at native resolution.
 
-let pipRecorder   = null;
-let pipOffscreen  = null;
-let pipRecLoop    = false;
+let pipRecorder  = null;
+let pipOffscreen = null;
+let pipRecLoop   = false;
 
 document.getElementById("pip-rec-btn").addEventListener("click", function () {
   if (pipRecorder) {
@@ -1032,11 +1072,10 @@ document.getElementById("pip-rec-btn").addEventListener("click", function () {
     return;
   }
 
-  const video     = document.getElementById("video");
-  const overlay   = document.getElementById("pip-canvas");
-  pipOffscreen    = document.createElement("canvas");
-  pipOffscreen.width  = video.videoWidth  || 640;
-  pipOffscreen.height = video.videoHeight || 480;
+  const video  = document.getElementById("video");
+  pipOffscreen = document.createElement("canvas");
+  pipOffscreen.width  = video.videoWidth  || 1280;
+  pipOffscreen.height = video.videoHeight || 720;
 
   const ctx    = pipOffscreen.getContext("2d");
   const stream = pipOffscreen.captureStream(30);
@@ -1045,16 +1084,17 @@ document.getElementById("pip-rec-btn").addEventListener("click", function () {
   this.textContent = "■ stop";
   this.classList.add("recording");
 
+  const W = pipOffscreen.width, H = pipOffscreen.height;
   (function composite() {
     if (!pipRecLoop) return;
+    // Draw mirrored video at full native resolution
     ctx.save();
-    // Mirror to match the CSS-flipped video
-    ctx.translate(pipOffscreen.width, 0);
+    ctx.translate(W, 0);
     ctx.scale(-1, 1);
-    ctx.drawImage(video, 0, 0, pipOffscreen.width, pipOffscreen.height);
+    ctx.drawImage(video, 0, 0, W, H);
     ctx.restore();
-    // Overlay is already drawn in mirrored space, draw it as-is
-    ctx.drawImage(overlay, 0, 0, pipOffscreen.width, pipOffscreen.height);
+    // Redraw landmarks at native resolution — no upscaling artefacts
+    drawPipOnCtx(ctx, latestPipLandmarks, W, H);
     requestAnimationFrame(composite);
   })();
 });
