@@ -1,32 +1,39 @@
 #!/bin/bash
-# Build rrelay.app and package it as a distributable DMG.
+# Build rrelay.app as a distributable macOS app.
 #
-# Requirements: Python 3.9+ (framework build — /usr/bin/python3 on macOS)
+# Requirements: Homebrew Python 3.12
 # Usage: cd relay && ./build.sh
 
 set -e
 cd "$(dirname "$0")"
 
-PYTHON=/usr/bin/python3   # must be the macOS framework build for rumps to work
+PYTHON=/opt/homebrew/opt/python@3.12/bin/python3.12
+
+echo "→ Setting up build venv..."
+$PYTHON -m venv .build-venv
+source .build-venv/bin/activate
 
 echo "→ Installing build dependencies..."
-$PYTHON -m pip install --quiet py2app rumps websockets python-osc
+pip install --quiet pyinstaller rumps websockets python-osc
 
 echo "→ Cleaning previous build..."
 rm -rf build dist
 
 echo "→ Building rrelay.app..."
-$PYTHON setup.py py2app --quiet
+python -m PyInstaller \
+  --windowed \
+  --onedir \
+  --name rrelay \
+  --hidden-import rumps \
+  --hidden-import websockets \
+  --hidden-import pythonosc \
+  --hidden-import pythonosc.udp_client \
+  menubar.py
 
 echo "→ Ad-hoc signing..."
 codesign --force --deep --sign - "dist/rrelay.app"
 
-echo "→ Creating DMG..."
-hdiutil create \
-  -volname "rrelay" \
-  -srcfolder "dist/rrelay.app" \
-  -ov -format UDZO \
-  "dist/rrelay.dmg"
+deactivate
 
 echo ""
-echo "✓  dist/rrelay.dmg  ready to distribute"
+echo "✓  dist/rrelay.app  ready — drag to /Applications to install"

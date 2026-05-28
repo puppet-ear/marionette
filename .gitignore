@@ -2,6 +2,8 @@ __pycache__/
 *.pyc
 relay/build/
 relay/dist/
+relay/.build-venv/
+relay/rrelay.spec
 *.mov
 *.mp4
 .DS_Store

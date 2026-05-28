@@ -1,25 +1,29 @@
 #!/usr/bin/env python3
-"""Strings — Marionette relay as a macOS menu bar app.
+"""rrelay — Marionette relay as a macOS menu bar app.
 
-Starts/stops relay.py as a subprocess. Relay stdout+stderr stream to a
-timestamped log file in ~/Library/Logs/Strings/.
+Runs the WebSocket→OSC relay in a background thread so the whole app
+ships as a single .app bundle (no external Python subprocess needed).
 
-Usage:
+Usage (dev):
     pip install rumps websockets python-osc
     python menubar.py
+
+Build:
+    ./build.sh
 """
 
+import asyncio
+import json
 import logging
 import os
 import pathlib
-import subprocess
 import sys
+import threading
 import time
 
 import rumps
 
-HERE     = pathlib.Path(__file__).parent
-RELAY_PY = HERE / "rrelay.py"
+# ── logging ──────────────────────────────────────────────────────────────────
 
 LOG_DIR = pathlib.Path.home() / "Library" / "Logs" / "Strings"
 LOG_DIR.mkdir(parents=True, exist_ok=True)
@@ -29,24 +33,114 @@ logging.basicConfig(
     format="%(asctime)s  %(levelname)-7s  %(message)s",
     handlers=[logging.StreamHandler(sys.stdout)],
 )
-log = logging.getLogger("strings")
+log = logging.getLogger("rrelay")
 
+# ── relay core (runs in background thread) ────────────────────────────────────
+
+_relay_loop: asyncio.AbstractEventLoop | None = None
+_relay_thread: threading.Thread | None = None
+_relay_log_fh = None
+
+
+async def _relay_main(ws_port: int, osc_port: int) -> None:
+    from pythonosc.udp_client import SimpleUDPClient
+    import websockets
+
+    async def handler(ws):
+        osc = SimpleUDPClient("127.0.0.1", osc_port)
+        frame_count = 0
+        addr = getattr(ws, "remote_address", "?")
+        log.info(f"[+] browser connected  {addr}")
+
+        async for raw in ws:
+            try:
+                packet = json.loads(raw)
+                if not packet:
+                    continue
+                for name, val in packet.items():
+                    if name.startswith("__"):
+                        osc.send_message(f"/control/{name[2:]}", float(val))
+                    else:
+                        osc.send_message(f"/empty/{name}", [float(v) for v in val])
+                frame_count += 1
+            except Exception as e:
+                log.warning(f"frame error: {e}")
+
+        log.info(f"[-] browser disconnected  {addr}  ({frame_count} frames)")
+
+    log.info(f"relay  ws://localhost:{ws_port}  →  osc://127.0.0.1:{osc_port}")
+    async with websockets.serve(handler, "localhost", ws_port):
+        await asyncio.Future()  # run until loop is stopped
+
+
+def _relay_thread_fn(ws_port: int, osc_port: int) -> None:
+    global _relay_loop
+    loop = asyncio.new_event_loop()
+    _relay_loop = loop
+    asyncio.set_event_loop(loop)
+    try:
+        loop.run_until_complete(_relay_main(ws_port, osc_port))
+    except Exception as e:
+        log.error(f"relay error: {e}")
+    finally:
+        loop.close()
+        _relay_loop = None
+
+
+def _start_relay(ws_port: int, osc_port: int) -> None:
+    global _relay_thread, _relay_log_fh
+    log_path = LOG_DIR / f"relay_{int(time.time())}.log"
+    _relay_log_fh = open(log_path, "w")
+    fh_handler = logging.FileHandler(log_path)
+    fh_handler.setFormatter(logging.Formatter("%(asctime)s  %(levelname)-7s  %(message)s"))
+    log.addHandler(fh_handler)
+    log.info(f"session log → {log_path}")
+
+    _relay_thread = threading.Thread(
+        target=_relay_thread_fn,
+        args=(ws_port, osc_port),
+        daemon=True,
+        name="relay",
+    )
+    _relay_thread.start()
+
+
+def _stop_relay() -> None:
+    global _relay_loop, _relay_thread, _relay_log_fh
+    if _relay_loop:
+        _relay_loop.call_soon_threadsafe(_relay_loop.stop)
+    if _relay_thread:
+        _relay_thread.join(timeout=3)
+        _relay_thread = None
+    # remove file handler added during start
+    for h in log.handlers[:]:
+        if isinstance(h, logging.FileHandler):
+            h.close()
+            log.removeHandler(h)
+    if _relay_log_fh:
+        _relay_log_fh.close()
+        _relay_log_fh = None
+
+
+def _relay_running() -> bool:
+    return _relay_thread is not None and _relay_thread.is_alive()
+
+
+# ── menu bar app ──────────────────────────────────────────────────────────────
 
 class RRelayApp(rumps.App):
     def __init__(self):
         super().__init__("rrelay", quit_button=None)
         self.ws_port = 8765
         self.osc_port = 7700
-        self._proc = None
-        self._log_fh = None
 
         self.status_item = rumps.MenuItem("stopped")
         self.toggle_item = rumps.MenuItem("Start", callback=self.toggle)
-        self.ws_item = rumps.MenuItem(f"WS Port: {self.ws_port}", callback=self.set_ws_port)
-        self.osc_item = rumps.MenuItem(f"OSC Port: {self.osc_port}", callback=self.set_osc_port)
-        self.log_item = rumps.MenuItem("Open Logs", callback=self.open_logs)
-        self.kill_item = rumps.MenuItem("Kill port…", callback=self.kill_port)
-        quit_item = rumps.MenuItem("Quit", callback=rumps.quit_application)
+        self.ws_item    = rumps.MenuItem(f"WS Port: {self.ws_port}",  callback=self.set_ws_port)
+        self.osc_item   = rumps.MenuItem(f"OSC Port: {self.osc_port}", callback=self.set_osc_port)
+        self.log_item   = rumps.MenuItem("Open Logs", callback=self.open_logs)
+        self.kill_item  = rumps.MenuItem("Kill port…", callback=self.kill_port)
+        quit_item       = rumps.MenuItem("Quit", callback=self._quit)
 
         self.menu = [
             self.status_item,
@@ -65,57 +159,26 @@ class RRelayApp(rumps.App):
         self._poll_timer.start()
 
     def toggle(self, _):
-        if self._proc and self._proc.poll() is None:
-            self._stop()
+        if _relay_running():
+            _stop_relay()
+            self._update_status(False)
+            log.info("relay stopped by user")
         else:
-            self._start()
-
-    def _start(self):
-        log_path = LOG_DIR / f"relay_{int(time.time())}.log"
-        self._log_fh = open(log_path, "w")
-        try:
-            self._proc = subprocess.Popen(
-                [sys.executable, str(RELAY_PY),
-                 "--ws-port", str(self.ws_port),
-                 "--osc-port", str(self.osc_port)],
-                stdout=self._log_fh,
-                stderr=self._log_fh,
-            )
-        except Exception as e:
-            log.error(f"Failed to start relay: {e}")
-            rumps.notification("Strings", "Failed to start", str(e))
-            self._log_fh.close()
-            self._log_fh = None
-            return
-        self._update_status(True)
-        log.info(f"Relay started (pid {self._proc.pid})  ws:{self.ws_port}  osc:{self.osc_port}  log→{log_path}")
-
-    def _stop(self):
-        if self._proc:
-            self._proc.terminate()
             try:
-                self._proc.wait(timeout=0.5)
-            except subprocess.TimeoutExpired:
-                self._proc.kill()
-            self._proc = None
-        if self._log_fh:
-            self._log_fh.close()
-            self._log_fh = None
-        self._update_status(False)
-        log.info("Relay stopped")
+                _start_relay(self.ws_port, self.osc_port)
+                self._update_status(True)
+                log.info(f"relay started  ws:{self.ws_port}  osc:{self.osc_port}")
+            except Exception as e:
+                log.error(f"failed to start relay: {e}")
+                rumps.notification("rrelay", "Failed to start", str(e))
 
     def _poll(self, _):
-        if self._proc and self._proc.poll() is not None:
-            rc = self._proc.returncode
-            self._proc = None
-            if self._log_fh:
-                self._log_fh.close()
-                self._log_fh = None
+        if not _relay_running() and self.toggle_item.title == "Stop":
             self._update_status(False)
-            log.warning(f"Relay exited unexpectedly (rc={rc})")
-            rumps.notification("Strings", "Relay stopped", f"Exit code {rc}. Open Logs for details.")
+            log.warning("relay stopped unexpectedly")
+            rumps.notification("rrelay", "Relay stopped", "Open Logs for details.")
 
-    def _update_status(self, running):
+    def _update_status(self, running: bool):
         self.title = "🟢 rrelay" if running else "rrelay"
         self.status_item.title = "running" if running else "stopped"
         self.toggle_item.title = "Stop" if running else "Start"
@@ -131,7 +194,6 @@ class RRelayApp(rumps.App):
             try:
                 self.ws_port = int(r.text)
                 self.ws_item.title = f"WS Port: {self.ws_port}"
-                log.info(f"WS port → {self.ws_port}")
             except ValueError:
                 rumps.alert("Invalid port number.")
 
@@ -146,11 +208,11 @@ class RRelayApp(rumps.App):
             try:
                 self.osc_port = int(r.text)
                 self.osc_item.title = f"OSC Port: {self.osc_port}"
-                log.info(f"OSC port → {self.osc_port}")
             except ValueError:
                 rumps.alert("Invalid port number.")
 
     def kill_port(self, _):
+        import subprocess
         result = subprocess.run(
             ["lsof", "-ti", f":{self.ws_port}"],
             capture_output=True, text=True,
@@ -159,7 +221,6 @@ class RRelayApp(rumps.App):
         if not pids:
             rumps.alert(f"Nothing on port {self.ws_port}.")
             return
-        # look up process names for each pid
         lines = []
         for pid in pids:
             info = subprocess.run(
@@ -167,20 +228,24 @@ class RRelayApp(rumps.App):
                 capture_output=True, text=True,
             ).stdout.strip()
             lines.append(info or pid)
-        msg = "\n".join(lines)
         resp = rumps.alert(
             title=f"Kill port {self.ws_port}?",
-            message=f"These processes are using it:\n\n{msg}\n\nKill them?",
+            message=f"These processes are using it:\n\n{chr(10).join(lines)}\n\nKill them?",
             ok="Kill",
             cancel="Cancel",
         )
         if resp == 1:
             for pid in pids:
                 subprocess.run(["kill", "-9", pid])
-            log.info(f"Killed pids {pids} on port {self.ws_port}")
+            log.info(f"killed pids {pids} on port {self.ws_port}")
 
     def open_logs(self, _):
         os.system(f"open '{LOG_DIR}'")
+
+    def _quit(self, _):
+        if _relay_running():
+            _stop_relay()
+        rumps.quit_application()
 
 
 if __name__ == "__main__":
