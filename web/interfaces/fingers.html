@@ -198,8 +198,25 @@ canvas#output {
 }
 
 
-#camera-select {
+#camera-wrap {
+  position: relative;
   flex: 1;
+  min-width: 0;
+  border: 1px solid var(--line);
+  padding: 1px 16px 1px 5px;
+}
+#camera-wrap::after {
+  content: "▾";
+  position: absolute;
+  right: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 8px;
+  color: var(--mid);
+  pointer-events: none;
+}
+#camera-select {
+  width: 100%;
   font-family: var(--font);
   font-size: 9px;
   color: var(--mid);
@@ -213,7 +230,6 @@ canvas#output {
   text-overflow: ellipsis;
   overflow: hidden;
   letter-spacing: 0.05em;
-  min-width: 0;
 }
 
 
@@ -387,7 +403,9 @@ input[type="range"] {
         <canvas id="pip-canvas"></canvas>
       </div>
       <div id="pip-label">
-        <select id="camera-select"></select>
+        <div id="camera-wrap">
+          <select id="camera-select"></select>
+        </div>
       </div>
     </div>
   </div>
