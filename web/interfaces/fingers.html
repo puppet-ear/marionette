@@ -636,9 +636,10 @@ async function populateCameraSelect(activeDeviceId) {
   const devices = await navigator.mediaDevices.enumerateDevices();
   const cameras = devices.filter(d => d.kind === "videoinput");
   const sel = document.getElementById("camera-select");
-  sel.innerHTML = cameras.map((d, i) =>
-    `<option value="${d.deviceId}"${d.deviceId === activeDeviceId ? " selected" : ""}>${d.label || `Camera ${i + 1}`}</option>`
-  ).join("");
+  sel.innerHTML = cameras.map((d, i) => {
+    const label = (d.label || `Camera ${i + 1}`).replace(/\s*\([0-9a-f:]+\)\s*$/i, "").trim();
+    return `<option value="${d.deviceId}"${d.deviceId === activeDeviceId ? " selected" : ""}>${label}</option>`;
+  }).join("");
 }
 
 async function startCamera() {
