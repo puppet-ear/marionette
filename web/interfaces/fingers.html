@@ -1009,7 +1009,10 @@ document.getElementById("pip-drag").addEventListener("mousedown", e => {
 
 function startRecorder(stream, filename) {
   const chunks = [];
-  const mr     = new MediaRecorder(stream, { mimeType: getSupportedMime() });
+  const mr     = new MediaRecorder(stream, {
+    mimeType:          getSupportedMime(),
+    videoBitsPerSecond: 16_000_000,  // 16 Mbps — adequate for 1080p
+  });
   mr.ondataavailable = e => e.data.size && chunks.push(e.data);
   mr.onstop = () => {
     const blob = new Blob(chunks, { type: mr.mimeType });
@@ -1076,6 +1079,7 @@ document.getElementById("pip-rec-btn").addEventListener("click", function () {
   pipOffscreen = document.createElement("canvas");
   pipOffscreen.width  = video.videoWidth  || 1280;
   pipOffscreen.height = video.videoHeight || 720;
+  console.log(`[rec] camera ${pipOffscreen.width}×${pipOffscreen.height}`);
 
   const ctx    = pipOffscreen.getContext("2d");
   const stream = pipOffscreen.captureStream(30);
